@@ -103,7 +103,6 @@ const DEFAULT_DRIVER_NAMES = [
 ] as const;
 
 const DRIVER_STORAGE_KEY = "pickup_driver_names_v1";
-
 const BUCKET = "order-photos";
 const DIFF_LIMIT_KM = 100;
 const MAX_ARRIVALS = 8;
@@ -112,6 +111,7 @@ const MAX_ARRIVALS = 8;
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
+
 function formatReportTimeJa(date: Date) {
   const y = date.getFullYear() % 100;
   const m = date.getMonth() + 1;
@@ -120,6 +120,7 @@ function formatReportTimeJa(date: Date) {
   const mm = pad2(date.getMinutes());
   return `${y}年${m}月${d}日${hh}時${mm}分（自動）`;
 }
+
 function formatDateTimeForExcel(date: Date) {
   const y = date.getFullYear();
   const m = date.getMonth() + 1;
@@ -128,32 +129,40 @@ function formatDateTimeForExcel(date: Date) {
   const mm = pad2(date.getMinutes());
   return `${y}/${m}/${d} ${hh}:${mm}`;
 }
+
 function toHalfWidthDigits(s: string) {
   return (s ?? "").replace(/[０-９]/g, (ch) =>
     String.fromCharCode(ch.charCodeAt(0) - 0xfee0)
   );
 }
+
 function onlyAsciiDigitsFromAnyWidth(s: string) {
   const half = toHalfWidthDigits(s);
   return half.replace(/[^\d]/g, "");
 }
+
 function asCell(v: unknown): string | number | "" {
   if (v == null) return "";
   if (typeof v === "number") return Number.isFinite(v) ? v : "";
   const s = String(v).trim();
   return s === "" ? "" : s;
 }
+
 function calcSeg(from: number | null, to: number | null): number | "" {
   if (from == null || to == null) return "";
   const d = to - from;
   if (!Number.isFinite(d)) return "";
   return d >= 0 ? d : "";
 }
+
 function sumSegs(values: Array<number | "">): number | "" {
-  const nums = values.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+  const nums = values.filter(
+    (v): v is number => typeof v === "number" && Number.isFinite(v)
+  );
   if (!nums.length) return "";
   return nums.reduce((a, b) => a + b, 0);
 }
+
 function emptyArrival(): ArrivalInput {
   return {
     locationId: null,
@@ -164,12 +173,15 @@ function emptyArrival(): ArrivalInput {
     ocrStatus: "",
   };
 }
+
 function uniqStrings(arr: string[]) {
   return [...new Set(arr.map((s) => s.trim()).filter(Boolean))];
 }
+
 function pickBestDigits(text: string) {
   const cands = (text.replace(/\s/g, "").match(/\d{3,9}/g) ?? []).map(String);
   if (!cands.length) return null;
+
   const score = (s: string) => {
     let sc = 0;
     const n = s.length;
@@ -181,10 +193,11 @@ function pickBestDigits(text: string) {
     sc += Math.min(new Set(s.split("")).size, 6);
     return sc;
   };
+
   return cands.sort((a, b) => score(b) - score(a))[0];
 }
 
-/** OCR保護エリア */
+/** OCR保護エリア（触らない） */
 async function cropMeterArea(file: File): Promise<Blob> {
   const img = document.createElement("img");
   img.src = URL.createObjectURL(file);
@@ -222,6 +235,7 @@ async function cropMeterArea(file: File): Promise<Blob> {
   return blob;
 }
 
+/** ========= main ========= */
 export default function Page() {
   const [mode, setMode] = useState<Mode>("route");
 
@@ -230,10 +244,11 @@ export default function Page() {
   const [fares, setFares] = useState<FareRow[]>([]);
   const [loadErr, setLoadErr] = useState("");
 
-  // driver (editable in-app)
+  // driver (editable / localStorage)
   const [driverNames, setDriverNames] = useState<string[]>([]);
   const [driverName, setDriverName] = useState<string>("");
   const [newDriverName, setNewDriverName] = useState("");
+  const [showDriverManager, setShowDriverManager] = useState(false);
 
   // route
   const [fromId, setFromId] = useState<number | null>(null);
@@ -248,7 +263,7 @@ export default function Page() {
   const [departPreview, setDepartPreview] = useState<string | null>(null);
   const [departOcrStatus, setDepartOcrStatus] = useState("");
 
-  // note / ui
+  // ui
   const [note, setNote] = useState("");
   const [status, setStatus] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -257,7 +272,7 @@ export default function Page() {
   // time
   const [now, setNow] = useState<Date>(() => new Date());
 
-  // file input refs (写真を選ぶボタン用)
+  // file input refs
   const departFileRef = useRef<HTMLInputElement | null>(null);
   const arrivalFileRefs = useRef<Array<HTMLInputElement | null>>([]);
 
@@ -266,7 +281,7 @@ export default function Page() {
     return () => clearInterval(t);
   }, []);
 
-  /** 運転者リスト読み込み（localStorage） */
+  /** ========= driver localStorage ========= */
   useEffect(() => {
     try {
       const raw = localStorage.getItem(DRIVER_STORAGE_KEY);
@@ -277,7 +292,7 @@ export default function Page() {
         return;
       }
       const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) throw new Error("invalid driver list");
+      if (!Array.isArray(parsed)) throw new Error("invalid");
       const clean = uniqStrings(parsed.map(String));
       const merged = clean.length ? clean : [...DEFAULT_DRIVER_NAMES];
       setDriverNames(merged);
@@ -289,44 +304,49 @@ export default function Page() {
     }
   }, []);
 
-  /** 運転者リスト保存 */
   useEffect(() => {
     if (!driverNames.length) return;
     try {
       localStorage.setItem(DRIVER_STORAGE_KEY, JSON.stringify(driverNames));
     } catch {
-      // 容量/プライベートモード等は無視
+      // ignore
     }
   }, [driverNames]);
 
   function addDriver() {
     const name = newDriverName.trim();
     if (!name) return;
-    setDriverNames((prev) => {
-      const next = uniqStrings([...prev, name]);
-      return next;
-    });
+
+    setDriverNames((prev) => uniqStrings([...prev, name]));
     setDriverName(name);
     setNewDriverName("");
+    setShowDriverManager(false);
   }
 
   function removeDriver(name: string) {
+    const ok = window.confirm(`「${name}」を削除する？`);
+    if (!ok) return;
+
     setDriverNames((prev) => {
       const next = prev.filter((x) => x !== name);
-      if (next.length === 0) return [...DEFAULT_DRIVER_NAMES];
-      return next;
+      return next.length ? next : [...DEFAULT_DRIVER_NAMES];
     });
+
     setDriverName((prev) => (prev === name ? "" : prev));
   }
 
-  /** masters */
+  /** ========= masters load ========= */
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
       setLoadErr("");
       try {
-        const locRes = await supabase.from("locations").select("id,name,kind").order("name", { ascending: true });
+        const locRes = await supabase
+          .from("locations")
+          .select("id,name,kind")
+          .order("name", { ascending: true });
+
         if (locRes.error) {
           if (!cancelled) {
             setLocations([]);
@@ -337,12 +357,17 @@ export default function Page() {
           setLocations((locRes.data ?? []) as LocationRow[]);
         }
 
-        const fareRes = await supabase.from("route_fares").select("from_id,to_id,amount_yen");
+        const fareRes = await supabase
+          .from("route_fares")
+          .select("from_id,to_id,amount_yen");
+
         if (fareRes.error) {
           if (!cancelled) {
             setFares([]);
             setLoadErr((prev) =>
-              prev ? prev + " / fares取得に失敗（RLS/権限/テーブル名）" : "fares取得に失敗（RLS/権限/テーブル名を確認）"
+              prev
+                ? prev + " / fares取得に失敗（RLS/権限/テーブル名）"
+                : "fares取得に失敗（RLS/権限/テーブル名を確認）"
             );
             console.error("[fares fetch]", fareRes.error);
           }
@@ -364,7 +389,7 @@ export default function Page() {
     };
   }, []);
 
-  /** lookup */
+  /** ========= lookups ========= */
   const locMap = useMemo(() => {
     const m = new Map<number, string>();
     for (const l of locations) m.set(l.id, l.name);
@@ -384,7 +409,7 @@ export default function Page() {
     return names.join("→");
   }, [fromId, arrivals, arrivalCount, locMap]);
 
-  /** fare */
+  /** ========= fare ========= */
   function findFare(a: number, b: number): number | null {
     const direct = fares.find((f) => f.from_id === a && f.to_id === b);
     if (direct) return direct.amount_yen;
@@ -399,6 +424,7 @@ export default function Page() {
 
     let cur = fromId;
     let sum = 0;
+
     for (let i = 0; i < arrivalCount; i++) {
       const next = arrivals[i].locationId;
       if (next == null) return null;
@@ -411,7 +437,7 @@ export default function Page() {
     return sum;
   }, [mode, fromId, arrivals, arrivalCount, fares]);
 
-  /** distance */
+  /** ========= distances ========= */
   const segmentDistances = useMemo(() => {
     const s1 = calcSeg(departOdo, arrivals[0]?.odo ?? null);
     const s2 = calcSeg(arrivals[0]?.odo ?? null, arrivals[1]?.odo ?? null);
@@ -450,7 +476,7 @@ export default function Page() {
     return "";
   }, [arrivalCount, arrivals, departOdo, totalDistanceKm]);
 
-  /** preview */
+  /** ========= preview ========= */
   useEffect(() => {
     if (!departPhoto) {
       setDepartPreview(null);
@@ -461,7 +487,7 @@ export default function Page() {
     return () => URL.revokeObjectURL(url);
   }, [departPhoto]);
 
-  /** arrivals helpers */
+  /** ========= arrivals helpers ========= */
   function updateArrival(index: number, patch: Partial<ArrivalInput>) {
     setArrivals((prev) => {
       const next = [...prev];
@@ -486,17 +512,19 @@ export default function Page() {
     setArrivalCount((c) => Math.max(1, c - 1));
   }
 
-  /** OCR */
+  /** ========= OCR ========= */
   async function runOcr(file: File, target: "depart" | number) {
     const key = target === "depart" ? "depart" : `arrive-${target}`;
     if (ocrBusyKey) return;
 
     setOcrBusyKey(key);
+
     if (target === "depart") setDepartOcrStatus("OCR中…（ODOの数字だけ）");
     else updateArrival(target, { ocrStatus: "OCR中…（ODOの数字だけ）" });
 
     try {
       const cropped = await cropMeterArea(file);
+
       const result = await Tesseract.recognize(cropped, "eng", {
         tessedit_char_whitelist: "0123456789",
       } as any);
@@ -551,7 +579,7 @@ export default function Page() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [arrivals, arrivalCount]);
 
-  /** storage */
+  /** ========= storage ========= */
   async function uploadOnePhoto(file: File, prefix: string) {
     const ext = file.name.split(".").pop() || "jpg";
     const filename = `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
@@ -570,7 +598,7 @@ export default function Page() {
     return { path, url: pub.data?.publicUrl ?? null };
   }
 
-  /** flow */
+  /** ========= Power Automate ========= */
   async function postToFlow(payload: FlowPayload) {
     const res = await fetch("/api/powerautomate", {
       method: "POST",
@@ -580,19 +608,26 @@ export default function Page() {
 
     const text = await res.text();
     let j: any = null;
-    try { j = text ? JSON.parse(text) : null; } catch { }
+    try {
+      j = text ? JSON.parse(text) : null;
+    } catch {
+      j = null;
+    }
 
     if (!res.ok) {
-      throw new Error(`Power Automate送信失敗: ${res.status} ${j ? JSON.stringify(j) : text}`);
+      const detail = j ? JSON.stringify(j) : text;
+      throw new Error(`Power Automate送信失敗: ${res.status} ${detail}`);
     }
+
     if (j && j.ok === false) {
       throw new Error(j.error || JSON.stringify(j));
     }
   }
 
-  /** validation */
+  /** ========= validation ========= */
   const missingLabels = useMemo(() => {
     const miss: string[] = [];
+
     if (!driverName) miss.push("運転者");
 
     if (mode === "route") {
@@ -612,12 +647,23 @@ export default function Page() {
     }
 
     if (distanceInvalid) miss.push("走行距離（マイナス区間/100km以上）");
+
     return miss;
-  }, [driverName, mode, fromId, arrivalCount, arrivals, computedAmountYen, departOdo, departPhoto, distanceInvalid]);
+  }, [
+    driverName,
+    mode,
+    fromId,
+    arrivalCount,
+    arrivals,
+    computedAmountYen,
+    departOdo,
+    departPhoto,
+    distanceInvalid,
+  ]);
 
   const canSave = useMemo(() => missingLabels.length === 0 && !isSaving, [missingLabels, isSaving]);
 
-  /** save */
+  /** ========= save ========= */
   async function onSave() {
     if (isSaving) return;
     setStatus("");
@@ -635,7 +681,7 @@ export default function Page() {
       const reportAtExcel = formatDateTimeForExcel(nowAtSave);
       const amountToSave = mode === "bus" ? 2000 : (computedAmountYen as number);
 
-      // 出発写真
+      // 出発写真アップロード
       let depart_photo_path: string | null = null;
       let depart_photo_url: string | null = null;
       if (departPhoto) {
@@ -644,7 +690,7 @@ export default function Page() {
         depart_photo_url = r.url;
       }
 
-      // 到着1〜8写真
+      // 到着1〜8写真アップロード
       const arrivalPhotoUrls: string[] = Array(MAX_ARRIVALS).fill("");
       let lastArrivalPhotoPath: string | null = null;
       let lastArrivalPhotoUrl: string | null = null;
@@ -660,7 +706,7 @@ export default function Page() {
         }
       }
 
-      // DB（最終到着で保存）
+      // DB保存（既存スキーマ互換：最終到着を到着地として入れる）
       const finalArrival = arrivals[arrivalCount - 1];
       const payloadDb: PickupOrderInsert = {
         driver_name: driverName,
@@ -680,7 +726,9 @@ export default function Page() {
       const ins = await supabase.from("pickup_orders").insert(payloadDb);
       if (ins.error) {
         const e: any = ins.error;
-        throw new Error(`DB insert失敗: ${e?.message ?? ""} ${e?.details ?? ""} ${e?.hint ?? ""} (${e?.code ?? ""})`.trim());
+        throw new Error(
+          `DB insert失敗: ${e?.message ?? ""} ${e?.details ?? ""} ${e?.hint ?? ""} (${e?.code ?? ""})`.trim()
+        );
       }
 
       const arrivalNames = Array.from({ length: MAX_ARRIVALS }, (_, i) =>
@@ -717,6 +765,7 @@ export default function Page() {
         "距離（到着７〜到着８）": asCell(s8) as number | "",
 
         "総走行距離（km）": asCell(totalDistanceKm) as number | "",
+
         備考: (note ?? "").trim(),
 
         出発写真URL: depart_photo_url ?? "",
@@ -737,6 +786,7 @@ export default function Page() {
         await postToFlow(flowPayload);
         setStatus("保存しました（Power Automateにも送信OK）");
       } catch (e: any) {
+        console.error("[flow send]", e);
         setStatus(`保存しました（ただしPower Automate送信は失敗）: ${e?.message ?? "error"}`);
       }
 
@@ -756,18 +806,19 @@ export default function Page() {
   }
 
   return (
-    <main className="min-h-screen bg-black text-white flex items-start justify-center px-4 py-10">
+    <main className="min-h-screen bg-black text-white flex items-start justify-center px-4 py-8">
       <div className="w-full max-w-4xl">
-        <h1 className="text-center text-2xl font-semibold mb-1">ピックアップ手当</h1>
+        <h1 className="text-center text-3xl font-semibold mb-1">ピックアップ手当</h1>
         <p className="text-center text-sm text-white/60 mb-6">
           通常ルートは料金表参照 / バスは一律2,000円
         </p>
 
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-6 shadow-xl">
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-4 sm:p-6 shadow-xl">
           {/* 運転者 */}
-          <div className="grid grid-cols-[90px_1fr] gap-3 items-start mb-4">
+          <div className="grid grid-cols-[78px_1fr] sm:grid-cols-[90px_1fr] gap-3 items-start mb-4">
             <div className="text-sm text-white/70 mt-2">運転者</div>
-            <div className="space-y-3">
+
+            <div className="space-y-2">
               <select
                 value={driverName}
                 onChange={(e) => setDriverName(e.target.value)}
@@ -781,56 +832,77 @@ export default function Page() {
                 ))}
               </select>
 
-              <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                <div className="mb-2 text-xs text-white/60">運転者を追加 / 削除（この端末に保存）</div>
-                <div className="flex gap-2">
-                  <input
-                    value={newDriverName}
-                    onChange={(e) => setNewDriverName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        addDriver();
-                      }
-                    }}
-                    placeholder="新しい運転者名"
-                    className="flex-1 rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm"
-                  />
-                  <button
-                    type="button"
-                    onClick={addDriver}
-                    className="rounded-lg px-3 py-2 text-sm bg-white/10 hover:bg-white/15"
-                  >
-                    追加
-                  </button>
-                </div>
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setShowDriverManager((v) => !v)}
+                  className="rounded-lg px-3 py-2 text-xs bg-white/10 hover:bg-white/15 transition"
+                >
+                  {showDriverManager ? "▼ 運転者管理を閉じる" : "▶ 運転者を追加 / 削除"}
+                </button>
 
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {driverNames.map((n) => (
-                    <button
-                      key={`chip-${n}`}
-                      type="button"
-                      onClick={() => removeDriver(n)}
-                      className={`rounded-full border px-3 py-1 text-xs ${driverName === n
-                        ? "border-blue-400/40 bg-blue-900/40 text-white"
-                        : "border-white/10 bg-white/5 text-white/80"
-                        }`}
-                      title={`削除: ${n}`}
-                    >
-                      {n} <span className="ml-1 text-white/50">×</span>
-                    </button>
-                  ))}
-                </div>
+                <span className="text-xs text-white/40">{driverNames.length}人</span>
               </div>
+
+              {showDriverManager && (
+                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <div className="mb-2 text-xs text-white/60">
+                    運転者を追加 / 削除（この端末に保存）
+                  </div>
+
+                  <div className="flex gap-2">
+                    <input
+                      value={newDriverName}
+                      onChange={(e) => setNewDriverName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          addDriver();
+                        }
+                      }}
+                      placeholder="新しい運転者名"
+                      className="flex-1 rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={addDriver}
+                      className="rounded-lg px-3 py-2 text-sm bg-white/10 hover:bg-white/15"
+                    >
+                      追加
+                    </button>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {driverNames.map((n) => (
+                      <button
+                        key={`chip-${n}`}
+                        type="button"
+                        onClick={() => removeDriver(n)}
+                        className={`rounded-full border px-3 py-1 text-xs transition ${driverName === n
+                          ? "border-blue-400/40 bg-blue-900/40 text-white"
+                          : "border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
+                          }`}
+                        title={`削除: ${n}`}
+                      >
+                        {n} <span className="ml-1 text-white/50">×</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="mt-2 text-[11px] text-white/35">
+                    ※ タップで削除（確認ダイアログあり）
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
           {/* モード */}
-          <div className="grid grid-cols-2 gap-2 mb-6">
+          <div className="grid grid-cols-2 gap-2 mb-5">
             <button
               type="button"
               onClick={() => setMode("route")}
-              className={`rounded-xl px-3 py-2 text-sm transition ${mode === "route" ? "bg-blue-900/70" : "bg-white/5 hover:bg-white/10"
+              className={`rounded-xl px-3 py-3 text-sm transition ${mode === "route" ? "bg-blue-900/70" : "bg-white/5 hover:bg-white/10"
                 }`}
             >
               通常ルート
@@ -838,14 +910,15 @@ export default function Page() {
             <button
               type="button"
               onClick={() => setMode("bus")}
-              className={`rounded-xl px-3 py-2 text-sm transition ${mode === "bus" ? "bg-blue-900/70" : "bg-white/5 hover:bg-white/10"
+              className={`rounded-xl px-3 py-3 text-sm transition ${mode === "bus" ? "bg-blue-900/70" : "bg-white/5 hover:bg-white/10"
                 }`}
             >
               バス（固定）
             </button>
           </div>
 
-          <div className="grid grid-cols-[90px_1fr] items-start gap-3 mb-4">
+          {/* 上部フォーム */}
+          <div className="grid grid-cols-[78px_1fr] sm:grid-cols-[90px_1fr] items-start gap-3 mb-4">
             <div className="text-sm text-white/70 mt-2">出発地</div>
             <select
               value={fromId ?? ""}
@@ -883,7 +956,7 @@ export default function Page() {
             </div>
 
             <div className="text-sm text-white/70 mt-2">ルート</div>
-            <div className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm">
+            <div className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm break-all">
               {routeChain || "—"}
             </div>
 
@@ -945,7 +1018,11 @@ export default function Page() {
               </div>
               {departPreview ? (
                 <div className="mt-3">
-                  <img src={departPreview} alt="depart preview" className="max-h-40 rounded-lg border border-white/10" />
+                  <img
+                    src={departPreview}
+                    alt="depart preview"
+                    className="max-h-40 rounded-lg border border-white/10"
+                  />
                 </div>
               ) : null}
             </div>
@@ -954,19 +1031,23 @@ export default function Page() {
           {/* 到着1〜8 */}
           <div className="space-y-4 mt-6">
             {visibleArrivals.map((a, idx) => {
-              const segText =
-                typeof segmentDistances[idx] === "number" ? `${segmentDistances[idx]} km` : "—";
+              const segText = typeof segmentDistances[idx] === "number" ? `${segmentDistances[idx]} km` : "—";
 
               return (
-                <div key={`arrival-${idx}`} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                <div
+                  key={`arrival-${idx}`}
+                  className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                >
                   <div className="mb-3 text-base font-semibold">到着{idx + 1}</div>
 
-                  <div className="grid grid-cols-[90px_1fr] items-start gap-3">
+                  <div className="grid grid-cols-[78px_1fr] sm:grid-cols-[90px_1fr] items-start gap-3">
                     <div className="text-sm text-white/70 mt-2">場所</div>
                     <select
                       value={a.locationId ?? ""}
                       onChange={(e) =>
-                        updateArrival(idx, { locationId: e.target.value ? Number(e.target.value) : null })
+                        updateArrival(idx, {
+                          locationId: e.target.value ? Number(e.target.value) : null,
+                        })
                       }
                       className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"
                       disabled={mode === "bus"}
@@ -990,7 +1071,9 @@ export default function Page() {
                         placeholder={`例: １１２８５０（到着${idx + 1} / 全角OK）`}
                         className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"
                       />
-                      {a.ocrStatus ? <div className="mt-2 text-xs text-yellow-200">{a.ocrStatus}</div> : null}
+                      {a.ocrStatus ? (
+                        <div className="mt-2 text-xs text-yellow-200">{a.ocrStatus}</div>
+                      ) : null}
                     </div>
 
                     <div className="text-sm text-white/70 mt-2">区間距離</div>
@@ -1062,10 +1145,10 @@ export default function Page() {
           </div>
 
           {/* 下部 */}
-          <div className="grid grid-cols-[90px_1fr] items-start gap-3 mt-6">
+          <div className="grid grid-cols-[78px_1fr] sm:grid-cols-[90px_1fr] items-start gap-3 mt-6">
             <div className="text-sm text-white/70 mt-2">総走行距離</div>
             <div className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm">
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
                 <span className="font-semibold">
                   {typeof totalDistanceKm === "number" ? `${totalDistanceKm} km` : "—"}
                 </span>
@@ -1083,22 +1166,28 @@ export default function Page() {
           </div>
 
           {loadErr ? <div className="text-xs text-yellow-200 mt-4">{loadErr}</div> : null}
+
           {missingLabels.length ? (
             <div className="text-xs text-yellow-200 mt-4 whitespace-pre-wrap">
               未入力（備考以外は必須）：{"\n"}・{missingLabels.join("\n・")}
             </div>
           ) : null}
+
           {status ? <div className="text-sm text-yellow-200 mt-4 whitespace-pre-wrap">{status}</div> : null}
 
           <button
             type="button"
             onClick={onSave}
             disabled={!canSave}
-            className="mt-5 w-full rounded-xl bg-blue-900/70 hover:bg-blue-900/80 transition px-3 py-3 text-sm disabled:opacity-50"
+            className="mt-5 w-full rounded-xl bg-blue-900/70 hover:bg-blue-900/80 transition px-3 py-3 text-base font-semibold disabled:opacity-50"
             title={!canSave ? "備考以外に未入力があると保存できません" : ""}
           >
             {isSaving ? "保存中..." : "保存"}
           </button>
+
+          <div className="mt-3 text-center text-xs text-white/40">
+            写真を選ぶとODOを自動で読み取ります（OCR失敗時は手入力）
+          </div>
         </div>
       </div>
     </main>
