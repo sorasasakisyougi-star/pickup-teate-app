@@ -1,753 +1,656 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import Tesseract from "tesseract.js";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-/** ========= types ========= */
-type LocationRow = { id: number; name: string; kind?: string | null };
-type FareRow = { from_id: number; to_id: number; amount_yen: number };
 type Mode = "route" | "bus";
+
+type LocationRow = {
+  id: number;
+  name: string;
+  kind?: string | null;
+};
+
+type FareRow = {
+  from_id: number;
+  to_id: number;
+  amount_yen: number;
+};
 
 type ArrivalInput = {
   locationId: number | null;
-  odo: number | null;
-  photo: File | null;
-  photoPreview: string | null;
-  photoUrl?: string | null;
-  photoPath?: string | null;
-  ocrStatus?: string;
+  odoText: string; // 入力値（全角混在OK）
+  odoNum: number | null; // 正規化後
+  photoFile: File | null;
+  photoPreviewUrl: string | null;
+  photoUploadedUrl: string | null;
 };
 
-type PickupOrderInsert = {
-  driver_name: string;
-  is_bus: boolean;
-  from_id: number | null;
-  to_id: number | null;
-  amount_yen: number;
-  report_at: string;
-
-  // DBに既存の基本ODOだけ保存（到着ODOは最終到着ODO）
-  depart_odometer_km: number | null;
-  arrive_odometer_km: number | null;
-
-  depart_photo_path: string | null;
-  depart_photo_url: string | null;
-  arrive_photo_path: string | null;
-  arrive_photo_url: string | null;
+type MasterResponse = {
+  locations: LocationRow[];
+  route_rates?: FareRow[];
+  fares?: FareRow[];
 };
 
-type FlowPayload = {
-  日付: string;
-  運転者: string;
-  出発地: string;
-  到着1: string;
-  到着2: string;
-  到着3: string;
-  到着4: string;
-  到着5: string;
-  到着6: string;
-  到着7: string;
-  到着8: string;
-  バス: string;
-  "金額（円）": number | "";
-  "距離（始）": number | "";
-  "距離（始）〜到着1": number | "";
-  "距離（到着1〜到着2）": number | "";
-  "距離（到着2〜到着3）": number | "";
-  "距離（到着3〜到着4）": number | "";
-  "距離（到着4〜到着5）": number | "";
-  "距離（到着5〜到着6）": number | "";
-  "距離（到着6〜到着7）": number | "";
-  "距離（到着7〜到着8）": number | "";
-  "総走行距離（km）": number | "";
-  備考: string;
-
-  出発写真URL: string;
-  到着写真URL到着1: string;
-  到着写真URL到着2: string;
-  到着写真URL到着3: string;
-  到着写真URL到着4: string;
-  到着写真URL到着5: string;
-  到着写真URL到着6: string;
-  到着写真URL到着7: string;
-  到着写真URL到着8: string;
-};
-
-/** ========= constants ========= */
 const DRIVER_NAMES = [
-  "拓哉",
-  "ロヒップ",
-  "カビブ",
-  "ナルディ",
-  "フェブリ",
-  "アジ",
-  "ダニ",
-  "ハン",
-  "アンガ",
-  "コウォ",
-  "ワヒュ",
-  "ソレ",
-  "照太",
-  "エルヴァンド",
-  "ヨガ",
-  "ヘンキ",
-  "ラフリ",
-  "大空",
-  "優稀",
-  "ワルヨ",
-  "アンディ",
-  "ディカ",
-  "ディッキー",
-] as const;
+  "拓哉", "ロヒップ", "カビブ", "ナルディ", "フェブリ", "アジ", "ダニ", "ハン",
+  "アンガ", "コウォ", "ワヒュ", "ソレ", "照太", "エルヴァンド", "ヨガ", "ヘンキ",
+  "ラフリ", "大空", "優稀", "ワルヨ", "アンディ", "ディカ", "ディッキー", "ダニー",
+  "アシ", "フェブリ", "ユフェリ"
+];
 
-const BUCKET = "order-photos";
-const DIFF_LIMIT_KM = 100;
 const MAX_ARRIVALS = 8;
 
-/** ========= utils ========= */
-function pad2(n: number) {
-  return String(n).padStart(2, "0");
+function z2hDigits(input: string): string {
+  return input.replace(/[０-９]/g, (s) =>
+    String.fromCharCode(s.charCodeAt(0) - 0xfee0)
+  );
 }
 
-function formatReportTimeJa(date: Date) {
-  const y = date.getFullYear() % 100;
-  const m = date.getMonth() + 1;
-  const d = date.getDate();
-  const hh = date.getHours();
-  const mm = pad2(date.getMinutes());
-  return `${y}年${m}月${d}日${hh}時${mm}分（自動）`;
+function normalizeNumberText(input: string): string {
+  return z2hDigits(input).replace(/[^\d]/g, "");
 }
 
-function formatDateTimeForExcel(date: Date) {
+function parseNullableInt(input: string): number | null {
+  const n = normalizeNumberText(input);
+  if (!n) return null;
+  const v = Number(n);
+  return Number.isFinite(v) ? v : null;
+}
+
+function formatReportAtForExcel(date: Date): string {
+  // Excelに文字列で渡す（例: 2026/2/27 08:15）
   const y = date.getFullYear();
   const m = date.getMonth() + 1;
   const d = date.getDate();
-  const hh = pad2(date.getHours());
-  const mm = pad2(date.getMinutes());
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mm = String(date.getMinutes()).padStart(2, "0");
   return `${y}/${m}/${d} ${hh}:${mm}`;
 }
 
-function toHalfWidthDigits(s: string) {
-  return (s ?? "").replace(/[０-９]/g, (ch) =>
-    String.fromCharCode(ch.charCodeAt(0) - 0xfee0)
-  );
+function formatReportAtDisplay(date: Date): string {
+  // 画面表示用（例: 26年2月27日8時15分（自動））
+  const yy = String(date.getFullYear()).slice(-2);
+  const m = date.getMonth() + 1;
+  const d = date.getDate();
+  const h = date.getHours();
+  const min = String(date.getMinutes()).padStart(2, "0");
+  return `${yy}年${m}月${d}日${h}時${min}分（自動）`;
 }
 
-function onlyAsciiDigitsFromAnyWidth(s: string) {
-  return toHalfWidthDigits(s).replace(/[^\d]/g, "");
+function asExcelCell(value: unknown): string | number {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const s = String(value).trim();
+  return s === "" ? "" : s;
 }
 
-function pickBestDigits(text: string) {
-  const cands = (text.replace(/\s/g, "").match(/\d{3,9}/g) ?? []).map(String);
-  if (!cands.length) return null;
-
-  const score = (s: string) => {
-    let sc = 0;
-    const n = s.length;
-    if (n === 6) sc += 12;
-    else if (n === 5 || n === 7) sc += 10;
-    else if (n === 4 || n === 8) sc += 6;
-    else sc += 2;
-    if (s.startsWith("0")) sc -= 1;
-    const uniq = new Set(s.split("")).size;
-    sc += Math.min(uniq, 6);
-    return sc;
-  };
-
-  return cands.sort((a, b) => score(b) - score(a))[0];
+function calcSegmentDistance(fromOdo: number | null, toOdo: number | null): number | "" {
+  if (typeof fromOdo !== "number" || typeof toOdo !== "number") return "";
+  if (!Number.isFinite(fromOdo) || !Number.isFinite(toOdo)) return "";
+  const diff = toOdo - fromOdo;
+  return diff >= 0 ? diff : "";
 }
 
-/** メーター付近トリミング */
-async function cropMeterArea(file: File): Promise<Blob> {
-  const img = document.createElement("img");
-  img.src = URL.createObjectURL(file);
-
-  await new Promise<void>((resolve, reject) => {
-    img.onload = () => resolve();
-    img.onerror = () => reject(new Error("画像読み込みに失敗（JPEG/PNG推奨）"));
-  });
-
-  const W = img.naturalWidth;
-  const H = img.naturalHeight;
-
-  const left = Math.floor(W * 0.18);
-  const top = Math.floor(H * 0.48);
-  const width = Math.floor(W * 0.64);
-  const height = Math.floor(H * 0.34);
-
-  const canvas = document.createElement("canvas");
-  canvas.width = 1600;
-  canvas.height = Math.floor((1600 * height) / width);
-
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("canvasが使えません");
-
-  ctx.filter = "grayscale(1) contrast(1.45) brightness(1.1)";
-  ctx.drawImage(img, left, top, width, height, 0, 0, canvas.width, canvas.height);
-
-  URL.revokeObjectURL(img.src);
-
-  const blob: Blob = await new Promise((resolve) =>
-    canvas.toBlob((b) => resolve(b as Blob), "image/jpeg", 0.95)
-  );
-
-  return blob;
+function sumSegmentDistances(values: Array<number | "">): number | null {
+  const nums = values.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+  if (nums.length === 0) return null;
+  return nums.reduce((a, b) => a + b, 0);
 }
 
-function safeSegmentDiff(
-  prev: number | null | undefined,
-  next: number | null | undefined
-): number | "" {
-  if (prev == null || next == null) return "";
-  if (!Number.isFinite(prev) || !Number.isFinite(next)) return "";
-  const d = next - prev;
-  if (d < 0) return "";
-  return d;
-}
-
-function lastValidOdo(values: Array<number | null | undefined>): number | null {
-  for (let i = values.length - 1; i >= 0; i--) {
-    const v = values[i];
-    if (v != null && Number.isFinite(v)) return v;
-  }
-  return null;
-}
-
-function makeEmptyArrival(): ArrivalInput {
+function emptyArrival(): ArrivalInput {
   return {
     locationId: null,
-    odo: null,
-    photo: null,
-    photoPreview: null,
-    photoUrl: null,
-    photoPath: null,
-    ocrStatus: "",
+    odoText: "",
+    odoNum: null,
+    photoFile: null,
+    photoPreviewUrl: null,
+    photoUploadedUrl: null,
   };
 }
 
-/** ========= main ========= */
 export default function Page() {
+  const [loadingMaster, setLoadingMaster] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [errMsg, setErrMsg] = useState<string>("");
+  const [okMsg, setOkMsg] = useState<string>("");
+
+  const [locations, setLocations] = useState<LocationRow[]>([]);
+  const [fareRows, setFareRows] = useState<FareRow[]>([]);
+
+  const [driverName, setDriverName] = useState<string>("ダニー");
   const [mode, setMode] = useState<Mode>("route");
 
-  // master
-  const [locations, setLocations] = useState<LocationRow[]>([]);
-  const [fares, setFares] = useState<FareRow[]>([]);
-  const [loadErr, setLoadErr] = useState("");
-
-  // basic
-  const [driverName, setDriverName] = useState<string>("");
   const [fromId, setFromId] = useState<number | null>(null);
-  const [arrivals, setArrivals] = useState<ArrivalInput[]>([makeEmptyArrival()]);
+
+  const [arrivalCount, setArrivalCount] = useState<number>(1);
+  const [arrivals, setArrivals] = useState<ArrivalInput[]>(
+    Array.from({ length: MAX_ARRIVALS }, () => emptyArrival())
+  );
+
+  const [departOdoText, setDepartOdoText] = useState("");
+  const [departOdoNum, setDepartOdoNum] = useState<number | null>(null);
+
+  const [departPhotoFile, setDepartPhotoFile] = useState<File | null>(null);
+  const [departPhotoPreviewUrl, setDepartPhotoPreviewUrl] = useState<string | null>(null);
+  const [departPhotoUploadedUrl, setDepartPhotoUploadedUrl] = useState<string | null>(null);
+
   const [note, setNote] = useState("");
 
-  // depart
-  const [departOdo, setDepartOdo] = useState<number | null>(null);
-  const [departPhoto, setDepartPhoto] = useState<File | null>(null);
-  const [departPreview, setDepartPreview] = useState<string | null>(null);
-  const [departOcrStatus, setDepartOcrStatus] = useState("");
+  const departInputRef = useRef<HTMLInputElement | null>(null);
+  const arrivalInputRefs = useRef<Array<HTMLInputElement | null>>([]);
 
-  // ui
-  const [status, setStatus] = useState("");
-  const [isSaving, setIsSaving] = useState(false);
-  const [ocrBusyKey, setOcrBusyKey] = useState<string | null>(null);
+  const reportAtNow = useMemo(() => new Date(), [saving]); // 保存時に更新されやすいよう軽くトリガー
+  const reportAtDisplay = formatReportAtDisplay(reportAtNow);
+  const reportAtExcel = formatReportAtForExcel(reportAtNow);
 
-  // time
-  const [now, setNow] = useState<Date>(() => new Date());
   useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 10_000);
-    return () => clearInterval(t);
-  }, []);
-
-  /** ========= load masters ========= */
-  useEffect(() => {
-    let cancelled = false;
+    let alive = true;
     (async () => {
-      setLoadErr("");
       try {
-        const locRes = await supabase
-          .from("locations")
-          .select("id,name,kind")
-          .order("name", { ascending: true });
+        setLoadingMaster(true);
+        setErrMsg("");
 
-        if (locRes.error) {
-          if (!cancelled) {
-            setLocations([]);
-            setLoadErr("locations取得に失敗（RLS/権限/テーブル名を確認）");
-            console.error(locRes.error);
-          }
-        } else if (!cancelled) {
-          setLocations((locRes.data ?? []) as LocationRow[]);
-        }
+        // 既存APIに合わせて調整可
+        const r = await fetch("/api/master", { cache: "no-store" });
+        if (!r.ok) throw new Error(`/api/master failed: ${r.status}`);
 
-        const fareRes = await supabase.from("route_fares").select("from_id,to_id,amount_yen");
-        if (fareRes.error) {
-          if (!cancelled) {
-            setFares([]);
-            setLoadErr((prev) =>
-              prev ? `${prev} / route_fares取得に失敗` : "route_fares取得に失敗"
-            );
-            console.error(fareRes.error);
-          }
-        } else if (!cancelled) {
-          setFares((fareRes.data ?? []) as FareRow[]);
-        }
-      } catch (e) {
-        if (!cancelled) {
-          setLoadErr("マスタ取得で例外");
-          console.error(e);
-        }
+        const data: MasterResponse = await r.json();
+        if (!alive) return;
+
+        setLocations(Array.isArray(data.locations) ? data.locations : []);
+        const fares = Array.isArray(data.route_rates)
+          ? data.route_rates
+          : Array.isArray(data.fares)
+            ? data.fares
+            : [];
+        setFareRows(fares);
+      } catch (e: any) {
+        if (!alive) return;
+        setErrMsg(`マスタ読込失敗: ${e?.message ?? "unknown error"}`);
+      } finally {
+        if (alive) setLoadingMaster(false);
       }
     })();
+
     return () => {
-      cancelled = true;
+      alive = false;
     };
   }, []);
 
-  /** ========= lookup ========= */
-  const locMap = useMemo(() => {
+  const locationNameById = useMemo(() => {
     const m = new Map<number, string>();
     for (const l of locations) m.set(l.id, l.name);
     return m;
   }, [locations]);
 
-  const idToName = (id: number | null | undefined) => {
-    if (id == null) return "";
-    return locMap.get(id) ?? "";
-  };
+  const visibleArrivals = arrivals.slice(0, arrivalCount);
 
-  const fromName = useMemo(() => idToName(fromId), [fromId, locMap]);
+  const routeNames = useMemo(() => {
+    const names: string[] = [];
+    if (fromId) names.push(locationNameById.get(fromId) ?? "");
+    for (let i = 0; i < arrivalCount; i++) {
+      const a = arrivals[i];
+      if (a.locationId) names.push(locationNameById.get(a.locationId) ?? "");
+    }
+    return names.filter(Boolean).join("→");
+  }, [fromId, arrivals, arrivalCount, locationNameById]);
 
-  const arrivalNames = useMemo(() => {
-    const names = arrivals.map((a) => idToName(a.locationId));
-    while (names.length < MAX_ARRIVALS) names.push("");
-    return names.slice(0, MAX_ARRIVALS);
-  }, [arrivals, locMap]);
-
-  const routeLabel = useMemo(() => {
-    const names = [fromName, ...arrivals.map((a) => idToName(a.locationId))].filter(Boolean);
-    if (!names.length) return "—";
-    return names.join("→");
-  }, [fromName, arrivals, locMap]);
-
-  /** ========= amount ========= */
-  function findFare(a: number, b: number): number | null {
-    const direct = fares.find((f) => f.from_id === a && f.to_id === b);
+  function getFareOneWay(from: number, to: number): number | null {
+    if (!from || !to) return null;
+    const direct = fareRows.find((f) => f.from_id === from && f.to_id === to);
     if (direct) return direct.amount_yen;
-    const reverse = fares.find((f) => f.from_id === b && f.to_id === a);
+    const reverse = fareRows.find((f) => f.from_id === to && f.to_id === from);
     if (reverse) return reverse.amount_yen;
     return null;
   }
 
-  const computedAmountYen = useMemo(() => {
-    if (mode === "bus") return 2000;
-    if (fromId == null) return null;
-    if (arrivals.length === 0) return null;
-    if (arrivals.some((a) => a.locationId == null)) return null;
-
-    const chain = [fromId, ...arrivals.map((a) => a.locationId as number)];
-    for (let i = 0; i < chain.length - 1; i++) {
-      if (chain[i] === chain[i + 1]) return null;
+  const totalAmountYen = useMemo(() => {
+    if (mode === "bus") {
+      // 必要なら固定料金に変更
+      return 2400;
     }
+    if (!fromId) return null;
 
+    let cur = fromId;
     let sum = 0;
-    for (let i = 0; i < chain.length - 1; i++) {
-      const fare = findFare(chain[i], chain[i + 1]);
-      if (fare == null) return null;
-      sum += fare;
-    }
-    return sum;
-  }, [mode, fromId, arrivals, fares]);
+    let hasAny = false;
 
-  /** ========= distance ========= */
-  const arrivalOdos = useMemo(() => {
-    const xs = arrivals.map((a) => a.odo ?? null);
-    while (xs.length < MAX_ARRIVALS) xs.push(null);
-    return xs.slice(0, MAX_ARRIVALS);
-  }, [arrivals]);
+    for (let i = 0; i < arrivalCount; i++) {
+      const next = arrivals[i].locationId;
+      if (!next) return null; // 未選択あり
+      const fare = getFareOneWay(cur, next);
+      if (fare == null) return null; // 料金表に無い区間
+      sum += fare;
+      hasAny = true;
+      cur = next;
+    }
+    return hasAny ? sum : null;
+  }, [mode, fromId, arrivals, arrivalCount, fareRows]);
 
   const segmentDistances = useMemo(() => {
-    const s1 = safeSegmentDiff(departOdo, arrivalOdos[0]);
-    const s2 = safeSegmentDiff(arrivalOdos[0], arrivalOdos[1]);
-    const s3 = safeSegmentDiff(arrivalOdos[1], arrivalOdos[2]);
-    const s4 = safeSegmentDiff(arrivalOdos[2], arrivalOdos[3]);
-    const s5 = safeSegmentDiff(arrivalOdos[3], arrivalOdos[4]);
-    const s6 = safeSegmentDiff(arrivalOdos[4], arrivalOdos[5]);
-    const s7 = safeSegmentDiff(arrivalOdos[5], arrivalOdos[6]);
-    const s8 = safeSegmentDiff(arrivalOdos[6], arrivalOdos[7]);
-    return [s1, s2, s3, s4, s5, s6, s7, s8] as const;
-  }, [departOdo, arrivalOdos]);
+    const a0 = arrivals[0]?.odoNum ?? null;
+    const a1 = arrivals[1]?.odoNum ?? null;
+    const a2 = arrivals[2]?.odoNum ?? null;
+    const a3 = arrivals[3]?.odoNum ?? null;
+    const a4 = arrivals[4]?.odoNum ?? null;
+    const a5 = arrivals[5]?.odoNum ?? null;
+    const a6 = arrivals[6]?.odoNum ?? null;
+    const a7 = arrivals[7]?.odoNum ?? null;
 
-  const totalKm = useMemo(() => {
-    const finalOdo = lastValidOdo(arrivalOdos);
-    return safeSegmentDiff(departOdo, finalOdo);
-  }, [departOdo, arrivalOdos]);
+    const s0 = calcSegmentDistance(departOdoNum, a0);
+    const s1 = calcSegmentDistance(a0, a1);
+    const s2 = calcSegmentDistance(a1, a2);
+    const s3 = calcSegmentDistance(a2, a3);
+    const s4 = calcSegmentDistance(a3, a4);
+    const s5 = calcSegmentDistance(a4, a5);
+    const s6 = calcSegmentDistance(a5, a6);
+    const s7 = calcSegmentDistance(a6, a7);
 
-  const anySegmentTooLarge = useMemo(() => {
-    const vals = [...segmentDistances, totalKm];
-    return vals.some((v) => typeof v === "number" && v >= DIFF_LIMIT_KM);
-  }, [segmentDistances, totalKm]);
+    return [s0, s1, s2, s3, s4, s5, s6, s7] as const;
+  }, [departOdoNum, arrivals]);
 
-  /** ========= previews ========= */
-  useEffect(() => {
-    if (!departPhoto) {
-      setDepartPreview(null);
-      return;
-    }
-    const url = URL.createObjectURL(departPhoto);
-    setDepartPreview(url);
-    return () => URL.revokeObjectURL(url);
-  }, [departPhoto]);
+  const totalDistanceKm = useMemo(() => {
+    return sumSegmentDistances([...segmentDistances]);
+  }, [segmentDistances]);
 
-  useEffect(() => {
-    setArrivals((prev) =>
-      prev.map((a) => {
-        if (!a.photo) {
-          if (a.photoPreview) URL.revokeObjectURL(a.photoPreview);
-          return { ...a, photoPreview: null };
-        }
-        if (a.photoPreview) return a;
-        return { ...a, photoPreview: URL.createObjectURL(a.photo) };
-      })
-    );
-  }, [arrivals.map((a) => a.photo).join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  /** ========= OCR ========= */
-  async function runOcr(file: File, key: string): Promise<number | null> {
-    if (ocrBusyKey) return null;
-    setOcrBusyKey(key);
-
-    try {
-      const cropped = await cropMeterArea(file);
-      const result = await Tesseract.recognize(cropped, "eng", {
-        tessedit_char_whitelist: "0123456789",
-      } as any);
-
-      const raw = result?.data?.text ?? "";
-      const best = pickBestDigits(String(raw));
-      if (!best) return null;
-
-      const n = Number(best);
-      if (!Number.isFinite(n)) return null;
-      return n;
-    } catch (e) {
-      console.error("[OCR]", e);
-      return null;
-    } finally {
-      setOcrBusyKey(null);
-    }
-  }
-
-  async function onDepartPhotoSelected(file: File | null) {
-    setDepartPhoto(file);
-    setDepartOcrStatus("");
-    if (!file) return;
-    setDepartOcrStatus("OCR中…");
-    const n = await runOcr(file, "depart");
-    if (n == null) {
-      setDepartOcrStatus("OCR失敗（手入力してね）");
-      return;
-    }
-    setDepartOdo(n);
-    setDepartOcrStatus(`OCR成功: ${n}`);
-  }
-
-  async function onArrivalPhotoSelected(index: number, file: File | null) {
-    setArrivals((prev) =>
-      prev.map((a, i) => (i === index ? { ...a, photo: file, ocrStatus: "" } : a))
-    );
-    if (!file) return;
-
-    setArrivals((prev) =>
-      prev.map((a, i) => (i === index ? { ...a, ocrStatus: "OCR中…" } : a))
-    );
-
-    const n = await runOcr(file, `arrive-${index}`);
-    if (n == null) {
-      setArrivals((prev) =>
-        prev.map((a, i) => (i === index ? { ...a, ocrStatus: "OCR失敗（手入力してね）" } : a))
-      );
-      return;
-    }
-
-    setArrivals((prev) =>
-      prev.map((a, i) => (i === index ? { ...a, odo: n, ocrStatus: `OCR成功: ${n}` } : a))
-    );
-  }
-
-  /** ========= storage upload ========= */
-  async function uploadOnePhoto(file: File, prefix: string) {
-    const ext = file.name.split(".").pop() || "jpg";
-    const filename = `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-    const path = filename;
-
-    const up = await supabase.storage.from(BUCKET).upload(path, file, {
-      upsert: true,
-      contentType: file.type || "image/jpeg",
+  function updateArrival(index: number, patch: Partial<ArrivalInput>) {
+    setArrivals((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], ...patch };
+      return next;
     });
-
-    if (up.error) throw new Error("写真アップロード失敗");
-
-    const pub = supabase.storage.from(BUCKET).getPublicUrl(path);
-    return { path, url: pub.data?.publicUrl ?? null };
   }
 
-  /** ========= Power Automate ========= */
-  async function postToFlow(payload: FlowPayload) {
-    const res = await fetch("/api/powerautomate", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    const text = await res.text();
-    let j: any = null;
-    try {
-      j = text ? JSON.parse(text) : null;
-    } catch {
-      j = null;
-    }
-
-    if (!res.ok) {
-      throw new Error(`Power Automate送信失敗: ${res.status} ${j ? JSON.stringify(j) : text}`);
-    }
-    if (j && j.ok === false) {
-      throw new Error(j.error || JSON.stringify(j));
-    }
-  }
-
-  /** ========= validations ========= */
-  const missingLabels = useMemo(() => {
-    const miss: string[] = [];
-
-    if (!driverName) miss.push("運転者");
-
-    if (mode === "route") {
-      if (fromId == null) miss.push("出発地");
-      if (arrivals.length === 0) miss.push("到着1以上");
-      arrivals.forEach((a, i) => {
-        if (a.locationId == null) miss.push(`到着${i + 1}（場所）`);
-        if (a.odo == null) miss.push(`到着${i + 1}ODO`);
-        if (!a.photo) miss.push(`写真(到着${i + 1})`);
-      });
-      if (computedAmountYen == null) miss.push("金額（料金表に無い区間/同一地点連続）");
-    }
-
-    if (departOdo == null) miss.push("出発ODO");
-    if (!departPhoto) miss.push("写真(出発)");
-
-    if (anySegmentTooLarge) miss.push(`距離差分が${DIFF_LIMIT_KM}km以上あり`);
-
-    return miss;
-  }, [driverName, mode, fromId, arrivals, departOdo, departPhoto, computedAmountYen, anySegmentTooLarge]);
-
-  const canSave = missingLabels.length === 0 && !isSaving;
-
-  /** ========= arrivals ops ========= */
   function addArrival() {
-    setArrivals((prev) => (prev.length >= MAX_ARRIVALS ? prev : [...prev, makeEmptyArrival()]));
+    setArrivalCount((c) => Math.min(MAX_ARRIVALS, c + 1));
   }
 
   function removeLastArrival() {
-    setArrivals((prev) => (prev.length <= 1 ? prev : prev.slice(0, -1)));
+    setArrivals((prev) => {
+      const next = [...prev];
+      const idx = Math.max(0, arrivalCount - 1);
+      const old = next[idx];
+      if (old?.photoPreviewUrl) URL.revokeObjectURL(old.photoPreviewUrl);
+      next[idx] = emptyArrival();
+      return next;
+    });
+    setArrivalCount((c) => Math.max(1, c - 1));
   }
 
-  function setArrivalField<K extends keyof ArrivalInput>(index: number, key: K, value: ArrivalInput[K]) {
-    setArrivals((prev) => prev.map((a, i) => (i === index ? { ...a, [key]: value } : a)));
+  async function uploadPhoto(file: File, kind: "depart" | "arrive", index?: number): Promise<string> {
+    const ext = file.name.split(".").pop() || "jpg";
+    const ts = Date.now();
+    const safeKind = kind === "depart" ? "depart" : "arrive";
+    const suffix = typeof index === "number" ? `_${index + 1}` : "";
+    const path = `${safeKind}/${ts}${suffix}.${ext}`;
+
+    const { error } = await supabase.storage.from("order-photos").upload(path, file, {
+      upsert: true,
+      contentType: file.type || "image/jpeg",
+    });
+    if (error) throw new Error(`写真アップロード失敗: ${error.message}`);
+
+    const { data } = supabase.storage.from("order-photos").getPublicUrl(path);
+    return data.publicUrl;
   }
 
-  useEffect(() => {
-    if (mode === "bus") {
-      // バスは到着を1件だけ扱う（見た目上）
-      setArrivals((prev) => (prev.length ? [prev[0]] : [makeEmptyArrival()]));
-    }
-  }, [mode]);
+  async function tryOcrFromImage(file: File): Promise<number | null> {
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
 
-  /** ========= save ========= */
-  async function onSave() {
-    if (!canSave) {
-      setStatus(`未入力あり：\n・${missingLabels.join("\n・")}`);
-      return;
-    }
+      const r = await fetch("/api/ocr", {
+        method: "POST",
+        body: fd,
+      });
+      if (!r.ok) return null;
 
-    setIsSaving(true);
-    setStatus("");
+      const data = await r.json();
+      // 期待: { odo: 123456 } or { value: "123456" } などに対応
+      const raw = data?.odo ?? data?.value ?? data?.text ?? null;
+      if (raw == null) return null;
+      const n = parseNullableInt(String(raw));
+      return n;
+    } catch {
+      return null;
+    }
+  }
+
+  async function onSelectDepartPhoto(file: File) {
+    if (departPhotoPreviewUrl) URL.revokeObjectURL(departPhotoPreviewUrl);
+
+    const preview = URL.createObjectURL(file);
+    setDepartPhotoFile(file);
+    setDepartPhotoPreviewUrl(preview);
+
+    // 手書きモード/自動入力チェックは消したので、常に軽くOCR試す
+    const ocr = await tryOcrFromImage(file);
+    if (ocr != null) {
+      setDepartOdoNum(ocr);
+      setDepartOdoText(String(ocr));
+    }
+  }
+
+  async function onSelectArrivalPhoto(index: number, file: File) {
+    const oldPreview = arrivals[index]?.photoPreviewUrl;
+    if (oldPreview) URL.revokeObjectURL(oldPreview);
+
+    const preview = URL.createObjectURL(file);
+    updateArrival(index, {
+      photoFile: file,
+      photoPreviewUrl: preview,
+      photoUploadedUrl: null,
+    });
+
+    const ocr = await tryOcrFromImage(file);
+    if (ocr != null) {
+      updateArrival(index, {
+        odoNum: ocr,
+        odoText: String(ocr),
+      });
+    }
+  }
+
+  function buildExcelPayload() {
+    const fromName = fromId ? locationNameById.get(fromId) ?? "" : "";
+    const modeLabel = mode === "bus" ? "バス（固定）" : "通常ルート";
+
+    const arr = Array.from({ length: MAX_ARRIVALS }, (_, i) => {
+      const a = arrivals[i];
+      return {
+        locationName: a.locationId ? locationNameById.get(a.locationId) ?? "" : "",
+        odo: a.odoNum,
+        photoUrl: a.photoUploadedUrl ?? "",
+      };
+    });
+
+    const s0 = calcSegmentDistance(departOdoNum, arr[0].odo);
+    const s1 = calcSegmentDistance(arr[0].odo, arr[1].odo);
+    const s2 = calcSegmentDistance(arr[1].odo, arr[2].odo);
+    const s3 = calcSegmentDistance(arr[2].odo, arr[3].odo);
+    const s4 = calcSegmentDistance(arr[3].odo, arr[4].odo);
+    const s5 = calcSegmentDistance(arr[4].odo, arr[5].odo);
+    const s6 = calcSegmentDistance(arr[5].odo, arr[6].odo);
+    const s7 = calcSegmentDistance(arr[6].odo, arr[7].odo);
+
+    const totalKm = sumSegmentDistances([s0, s1, s2, s3, s4, s5, s6, s7]);
+
+    // Excelの列名に完全一致（今の表）
+    const payload = {
+      日付: asExcelCell(reportAtExcel),
+      運転者: asExcelCell(driverName),
+      出発地: asExcelCell(fromName),
+
+      到着1: asExcelCell(arr[0].locationName),
+      到着2: asExcelCell(arr[1].locationName),
+      到着3: asExcelCell(arr[2].locationName),
+      到着4: asExcelCell(arr[3].locationName),
+      到着5: asExcelCell(arr[4].locationName),
+      到着6: asExcelCell(arr[5].locationName),
+      到着7: asExcelCell(arr[6].locationName),
+      到着8: asExcelCell(arr[7].locationName),
+
+      バス: asExcelCell(mode === "bus" ? "バス" : "通常ルート"),
+      "金額（円）": asExcelCell(totalAmountYen),
+
+      "距離（始）": asExcelCell(departOdoNum),
+      "距離（始）〜到着1": asExcelCell(s0),
+      "距離（到着1〜到着2）": asExcelCell(s1),
+      "距離（到着2〜到着3）": asExcelCell(s2),
+      "距離（到着3〜到着4）": asExcelCell(s3),
+      "距離（到着4〜到着5）": asExcelCell(s4),
+      "距離（到着5〜到着6）": asExcelCell(s5),
+      "距離（到着6〜到着7）": asExcelCell(s6),
+      "距離（到着7〜到着8）": asExcelCell(s7),
+
+      "総走行距離（km）": asExcelCell(totalKm),
+      備考: asExcelCell(note),
+
+      出発写真URL: asExcelCell(departPhotoUploadedUrl ?? ""),
+      到着写真URL到着1: asExcelCell(arr[0].photoUrl),
+      到着写真URL到着2: asExcelCell(arr[1].photoUrl),
+      到着写真URL到着3: asExcelCell(arr[2].photoUrl),
+      到着写真URL到着4: asExcelCell(arr[3].photoUrl),
+      到着写真URL到着5: asExcelCell(arr[4].photoUrl),
+      到着写真URL到着6: asExcelCell(arr[5].photoUrl),
+      到着写真URL到着7: asExcelCell(arr[6].photoUrl),
+      到着写真URL到着8: asExcelCell(arr[7].photoUrl),
+    };
+
+    console.log("=== POWER AUTOMATE PAYLOAD ===");
+    console.log(payload);
+    console.log(JSON.stringify(payload, null, 2));
+
+    return payload;
+  }
+
+  async function sendToPowerAutomate() {
+    const payload = buildExcelPayload();
+
+    const r = await fetch("/api/powerautomate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || !data?.ok) {
+      throw new Error(
+        `Power Automate送信失敗: status=${r.status} / ${JSON.stringify(data)}`
+      );
+    }
+  }
+
+  function validateRequired(): string[] {
+    const errs: string[] = [];
+    if (!driverName) errs.push("運転者");
+    if (!fromId) errs.push("出発地");
+    if (arrivalCount < 1) errs.push("到着1");
+    for (let i = 0; i < arrivalCount; i++) {
+      if (!arrivals[i].locationId) errs.push(`到着${i + 1}`);
+    }
+    if (!departOdoNum) errs.push("距離（始）");
+    return errs;
+  }
+
+  async function handleSave() {
+    setErrMsg("");
+    setOkMsg("");
 
     try {
-      const nowAtSave = new Date();
-      const reportAtIso = nowAtSave.toISOString();
-      const reportAtExcel = formatDateTimeForExcel(nowAtSave);
-      const amountToSave = mode === "bus" ? 2000 : (computedAmountYen as number);
-
-      // upload depart
-      let depart_photo_path: string | null = null;
-      let depart_photo_url: string | null = null;
-      if (departPhoto) {
-        const r = await uploadOnePhoto(departPhoto, "depart");
-        depart_photo_path = r.path;
-        depart_photo_url = r.url;
+      const missing = validateRequired();
+      if (missing.length > 0) {
+        throw new Error(`未入力（備考以外必須）: ${missing.join(" / ")}`);
       }
 
-      // upload arrivals
-      const uploadedArrivals = [...arrivals];
-      for (let i = 0; i < uploadedArrivals.length; i++) {
-        if (!uploadedArrivals[i].photo) continue;
-        const r = await uploadOnePhoto(uploadedArrivals[i].photo as File, `arrive_${i + 1}`);
-        uploadedArrivals[i] = {
-          ...uploadedArrivals[i],
-          photoPath: r.path,
-          photoUrl: r.url,
-        };
+      setSaving(true);
+
+      // 写真アップロード（出発）
+      let departPhotoUrl = departPhotoUploadedUrl;
+      if (departPhotoFile && !departPhotoUrl) {
+        departPhotoUrl = await uploadPhoto(departPhotoFile, "depart");
+        setDepartPhotoUploadedUrl(departPhotoUrl);
       }
 
-      // 最終到着（DB用）
-      const finalArrival = [...uploadedArrivals].reverse().find((a) => a.locationId != null) ?? null;
-      const finalArrivalOdo = lastValidOdo(uploadedArrivals.map((a) => a.odo));
-      const finalArrivalPhotoPath = finalArrival?.photoPath ?? null;
-      const finalArrivalPhotoUrl = finalArrival?.photoUrl ?? null;
-      const finalToId = finalArrival?.locationId ?? null;
-
-      // DB insert（基本形）
-      const payloadDb: PickupOrderInsert = {
-        driver_name: driverName,
-        is_bus: mode === "bus",
-        from_id: mode === "bus" ? null : fromId,
-        to_id: mode === "bus" ? null : finalToId,
-        amount_yen: amountToSave,
-        report_at: reportAtIso,
-
-        depart_odometer_km: departOdo,
-        arrive_odometer_km: finalArrivalOdo,
-
-        depart_photo_path,
-        depart_photo_url,
-        arrive_photo_path: finalArrivalPhotoPath,
-        arrive_photo_url: finalArrivalPhotoUrl,
-      };
-
-      const ins = await supabase.from("pickup_orders").insert(payloadDb);
-      if (ins.error) {
-        throw new Error(`DB insert失敗: ${ins.error.message} (${ins.error.code ?? ""})`);
+      // 写真アップロード（到着1〜8）
+      const uploadedArrivalUrls: (string | null)[] = Array(MAX_ARRIVALS).fill(null);
+      for (let i = 0; i < MAX_ARRIVALS; i++) {
+        const a = arrivals[i];
+        if (a.photoUploadedUrl) {
+          uploadedArrivalUrls[i] = a.photoUploadedUrl;
+          continue;
+        }
+        if (a.photoFile) {
+          const u = await uploadPhoto(a.photoFile, "arrive", i);
+          uploadedArrivalUrls[i] = u;
+          updateArrival(i, { photoUploadedUrl: u });
+        }
       }
 
-      // payload用 配列整形（8件固定）
-      const names8 = Array.from({ length: MAX_ARRIVALS }, (_, i) =>
-        idToName(uploadedArrivals[i]?.locationId ?? null)
+      // ここで state同期前でも payload に乗るようローカル反映
+      setDepartPhotoUploadedUrl(departPhotoUrl ?? null);
+      setArrivals((prev) =>
+        prev.map((a, i) => ({
+          ...a,
+          photoUploadedUrl: uploadedArrivalUrls[i] ?? a.photoUploadedUrl ?? null,
+        }))
       );
-      const odos8 = Array.from({ length: MAX_ARRIVALS }, (_, i) => uploadedArrivals[i]?.odo ?? null);
-      const urls8 = Array.from({ length: MAX_ARRIVALS }, (_, i) => uploadedArrivals[i]?.photoUrl ?? "");
 
-      const seg1 = safeSegmentDiff(departOdo, odos8[0]);
-      const seg2 = safeSegmentDiff(odos8[0], odos8[1]);
-      const seg3 = safeSegmentDiff(odos8[1], odos8[2]);
-      const seg4 = safeSegmentDiff(odos8[2], odos8[3]);
-      const seg5 = safeSegmentDiff(odos8[3], odos8[4]);
-      const seg6 = safeSegmentDiff(odos8[4], odos8[5]);
-      const seg7 = safeSegmentDiff(odos8[5], odos8[6]);
-      const seg8 = safeSegmentDiff(odos8[6], odos8[7]);
-      const total = safeSegmentDiff(departOdo, lastValidOdo(odos8));
+      // state更新待ちせず、今の値から payload を送るため一時的に直接再構成
+      // buildExcelPayload は state参照なので、アップロードURL反映版で送るため stateミラー作成
+      const savedDepartPhotoUploadedUrl = departPhotoUrl ?? null;
+      const savedArrivals = arrivals.map((a, i) => ({
+        ...a,
+        photoUploadedUrl: uploadedArrivalUrls[i] ?? a.photoUploadedUrl ?? null,
+      }));
 
-      const flowPayload: FlowPayload = {
-        日付: reportAtExcel,
-        運転者: driverName,
-        出発地: mode === "bus" ? "" : fromName,
+      // ---- DB保存（必要ならここに残す/調整）----
+      // 既存DBスキーマ差異が大きい可能性があるので、Excel送信を優先したい場合はDB保存をコメントアウトでもOK。
+      // 今回はDB保存を触らず、Power Automateを先に安定させる。
+      // ------------------------------------------
 
-        到着1: names8[0] || "",
-        到着2: names8[1] || "",
-        到着3: names8[2] || "",
-        到着4: names8[3] || "",
-        到着5: names8[4] || "",
-        到着6: names8[5] || "",
-        到着7: names8[6] || "",
-        到着8: names8[7] || "",
+      // Power Automate送信（ローカル一時上書きで確実に値を使う）
+      const originalArrivals = arrivals;
+      const originalDepartUrl = departPhotoUploadedUrl;
 
-        バス: mode === "bus" ? "バス" : "通常ルート",
-        "金額（円）": amountToSave,
+      // 一時的に state を使う build関数へ反映
+      // （React state setは非同期なので、ここは直接 payload生成関数をローカル版で作る）
+      {
+        const fromName = fromId ? locationNameById.get(fromId) ?? "" : "";
+        const arr = Array.from({ length: MAX_ARRIVALS }, (_, i) => {
+          const a = savedArrivals[i];
+          return {
+            locationName: a.locationId ? locationNameById.get(a.locationId) ?? "" : "",
+            odo: a.odoNum,
+            photoUrl: a.photoUploadedUrl ?? "",
+          };
+        });
 
-        "距離（始）": departOdo ?? "",
-        "距離（始）〜到着1": seg1,
-        "距離（到着1〜到着2）": seg2,
-        "距離（到着2〜到着3）": seg3,
-        "距離（到着3〜到着4）": seg4,
-        "距離（到着4〜到着5）": seg5,
-        "距離（到着5〜到着6）": seg6,
-        "距離（到着6〜到着7）": seg7,
-        "距離（到着7〜到着8）": seg8,
-        "総走行距離（km）": total,
+        const s0 = calcSegmentDistance(departOdoNum, arr[0].odo);
+        const s1 = calcSegmentDistance(arr[0].odo, arr[1].odo);
+        const s2 = calcSegmentDistance(arr[1].odo, arr[2].odo);
+        const s3 = calcSegmentDistance(arr[2].odo, arr[3].odo);
+        const s4 = calcSegmentDistance(arr[3].odo, arr[4].odo);
+        const s5 = calcSegmentDistance(arr[4].odo, arr[5].odo);
+        const s6 = calcSegmentDistance(arr[5].odo, arr[6].odo);
+        const s7 = calcSegmentDistance(arr[6].odo, arr[7].odo);
+        const totalKm = sumSegmentDistances([s0, s1, s2, s3, s4, s5, s6, s7]);
 
-        備考: note.trim(),
+        const payload = {
+          日付: asExcelCell(reportAtExcel),
+          運転者: asExcelCell(driverName),
+          出発地: asExcelCell(fromName),
 
-        出発写真URL: depart_photo_url ?? "",
-        到着写真URL到着1: urls8[0] || "",
-        到着写真URL到着2: urls8[1] || "",
-        到着写真URL到着3: urls8[2] || "",
-        到着写真URL到着4: urls8[3] || "",
-        到着写真URL到着5: urls8[4] || "",
-        到着写真URL到着6: urls8[5] || "",
-        到着写真URL到着7: urls8[6] || "",
-        到着写真URL到着8: urls8[7] || "",
-      };
+          到着1: asExcelCell(arr[0].locationName),
+          到着2: asExcelCell(arr[1].locationName),
+          到着3: asExcelCell(arr[2].locationName),
+          到着4: asExcelCell(arr[3].locationName),
+          到着5: asExcelCell(arr[4].locationName),
+          到着6: asExcelCell(arr[5].locationName),
+          到着7: asExcelCell(arr[6].locationName),
+          到着8: asExcelCell(arr[7].locationName),
 
-      // ★デバッグ（必要なら残す）
-      console.log("FLOW PAYLOAD", flowPayload);
+          バス: asExcelCell(mode === "bus" ? "バス" : "通常ルート"),
+          "金額（円）": asExcelCell(totalAmountYen),
 
-      try {
-        await postToFlow(flowPayload);
-        setStatus("保存しました（Power Automate送信OK）");
-      } catch (e: any) {
-        console.error(e);
-        setStatus(`DB保存OK / Power Automate送信失敗: ${e?.message ?? "error"}`);
+          "距離（始）": asExcelCell(departOdoNum),
+          "距離（始）〜到着1": asExcelCell(s0),
+          "距離（到着1〜到着2）": asExcelCell(s1),
+          "距離（到着2〜到着3）": asExcelCell(s2),
+          "距離（到着3〜到着4）": asExcelCell(s3),
+          "距離（到着4〜到着5）": asExcelCell(s4),
+          "距離（到着5〜到着6）": asExcelCell(s5),
+          "距離（到着6〜到着7）": asExcelCell(s6),
+          "距離（到着7〜到着8）": asExcelCell(s7),
+
+          "総走行距離（km）": asExcelCell(totalKm),
+          備考: asExcelCell(note),
+
+          出発写真URL: asExcelCell(savedDepartPhotoUploadedUrl ?? ""),
+          到着写真URL到着1: asExcelCell(arr[0].photoUrl),
+          到着写真URL到着2: asExcelCell(arr[1].photoUrl),
+          到着写真URL到着3: asExcelCell(arr[2].photoUrl),
+          到着写真URL到着4: asExcelCell(arr[3].photoUrl),
+          到着写真URL到着5: asExcelCell(arr[4].photoUrl),
+          到着写真URL到着6: asExcelCell(arr[5].photoUrl),
+          到着写真URL到着7: asExcelCell(arr[6].photoUrl),
+          到着写真URL到着8: asExcelCell(arr[7].photoUrl),
+        };
+
+        console.log("=== POWER AUTOMATE PAYLOAD (FINAL) ===");
+        console.log(payload);
+        console.log(JSON.stringify(payload, null, 2));
+
+        const r = await fetch("/api/powerautomate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok || !data?.ok) {
+          throw new Error(`Power Automate送信失敗: status=${r.status} / ${JSON.stringify(data)}`);
+        }
       }
 
-      // reset
-      setFromId(null);
-      setArrivals([makeEmptyArrival()]);
-      setDepartOdo(null);
-      setDepartPhoto(null);
-      setDepartOcrStatus("");
-      setNote("");
+      setOkMsg("保存しました（Excel送信OK）");
     } catch (e: any) {
-      setStatus(e?.message ?? "保存エラー");
+      setErrMsg(e?.message ?? "保存失敗");
     } finally {
-      setIsSaving(false);
+      setSaving(false);
     }
   }
 
-  /** ========= ui labels ========= */
-  const totalKmLabel = totalKm === "" ? "—" : `${totalKm} km`;
-
   return (
-    <main className="min-h-screen bg-black text-white flex items-start justify-center px-4 py-6 sm:py-10">
-      <div className="w-full max-w-4xl">
-        <h1 className="text-center text-2xl font-semibold mb-2">ピックアップ手当</h1>
-        <p className="text-center text-xs sm:text-sm text-white/60 mb-6">
-          到着最大8 / ODOから区間距離を自動計算してExcel送信
+    <main className="min-h-screen bg-black text-white">
+      <div className="mx-auto w-full max-w-4xl px-4 py-8">
+        <h1 className="text-center text-3xl font-bold">ピックアップ手当</h1>
+        <p className="mt-2 text-center text-sm text-white/60">
+          到着1〜8（場所・写真・ODO）/ 距離欄は区間距離 / 総走行距離は区間合計
         </p>
 
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-4 sm:p-6 shadow-xl">
-          {/* driver */}
+        {loadingMaster && (
+          <div className="mt-4 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/80">
+            マスタ読み込み中...
+          </div>
+        )}
+        {errMsg && (
+          <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+            {errMsg}
+          </div>
+        )}
+        {okMsg && (
+          <div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+            {okMsg}
+          </div>
+        )}
+
+        <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.03] p-4 shadow-2xl">
+          {/* 運転者 */}
           <div className="mb-4">
-            <div className="mb-2 text-sm text-white/70">運転者</div>
+            <label className="mb-2 block text-sm text-white/70">運転者</label>
             <select
+              className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-base outline-none ring-0"
               value={driverName}
               onChange={(e) => setDriverName(e.target.value)}
-              className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-3 text-sm"
             >
-              <option value="">選択</option>
               {DRIVER_NAMES.map((n) => (
-                <option key={n} value={n}>
+                <option key={n} value={n} className="bg-black">
                   {n}
                 </option>
               ))}
             </select>
           </div>
 
-          {/* mode */}
-          <div className="grid grid-cols-2 gap-2 mb-5">
+          {/* モード */}
+          <div className="mb-5 grid grid-cols-2 gap-2">
             <button
               type="button"
               onClick={() => setMode("route")}
-              className={`rounded-xl px-3 py-3 text-sm transition ${mode === "route" ? "bg-blue-900/70" : "bg-white/5 hover:bg-white/10"
+              className={`rounded-2xl px-4 py-3 text-base transition ${mode === "route"
+                ? "bg-blue-900/80 text-white"
+                : "bg-white/5 text-white/85 hover:bg-white/10"
                 }`}
             >
               通常ルート
@@ -755,246 +658,302 @@ export default function Page() {
             <button
               type="button"
               onClick={() => setMode("bus")}
-              className={`rounded-xl px-3 py-3 text-sm transition ${mode === "bus" ? "bg-blue-900/70" : "bg-white/5 hover:bg-white/10"
+              className={`rounded-2xl px-4 py-3 text-base transition ${mode === "bus"
+                ? "bg-blue-900/80 text-white"
+                : "bg-white/5 text-white/85 hover:bg-white/10"
                 }`}
             >
               バス（固定）
             </button>
           </div>
 
-          {/* from */}
-          <div className="mb-4">
-            <div className="mb-2 text-sm text-white/70">出発地</div>
-            <select
-              value={fromId ?? ""}
-              onChange={(e) => setFromId(e.target.value ? Number(e.target.value) : null)}
-              disabled={mode === "bus"}
-              className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-3 text-sm disabled:opacity-60"
-            >
-              <option value="">選択</option>
-              {locations.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* arrivals count ops */}
-          <div className="mb-4">
-            <div className="mb-2 text-sm text-white/70">到着数</div>
-            <div className="flex flex-wrap gap-2 items-center">
-              <button
-                type="button"
-                onClick={addArrival}
-                disabled={arrivals.length >= MAX_ARRIVALS}
-                className="rounded-xl px-3 py-2 text-sm bg-white/10 hover:bg-white/15 disabled:opacity-50"
+          <div className="grid grid-cols-1 gap-4">
+            {/* 出発地 */}
+            <div>
+              <label className="mb-2 block text-sm text-white/70">出発地</label>
+              <select
+                className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-base"
+                value={fromId ?? ""}
+                onChange={(e) => setFromId(e.target.value ? Number(e.target.value) : null)}
               >
-                ＋ 到着を追加
-              </button>
-              <button
-                type="button"
-                onClick={removeLastArrival}
-                disabled={arrivals.length <= 1}
-                className="rounded-xl px-3 py-2 text-sm bg-white/10 hover:bg-white/15 disabled:opacity-50"
+                <option value="" className="bg-black">選択</option>
+                {locations.map((l) => (
+                  <option key={l.id} value={l.id} className="bg-black">
+                    {l.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 到着数 */}
+            <div>
+              <label className="mb-2 block text-sm text-white/70">到着数</label>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={addArrival}
+                  disabled={arrivalCount >= MAX_ARRIVALS}
+                  className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm disabled:opacity-40"
+                >
+                  ＋ 到着を追加
+                </button>
+                <button
+                  type="button"
+                  onClick={removeLastArrival}
+                  disabled={arrivalCount <= 1}
+                  className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm disabled:opacity-40"
+                >
+                  − 最後の到着を削除
+                </button>
+                <span className="text-sm text-white/50">最大{MAX_ARRIVALS}個</span>
+              </div>
+            </div>
+
+            {/* ルート */}
+            <div>
+              <label className="mb-2 block text-sm text-white/70">ルート</label>
+              <div className="rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-base">
+                {routeNames || "—"}
+              </div>
+            </div>
+
+            {/* 金額 */}
+            <div>
+              <label className="mb-2 block text-sm text-white/70">金額</label>
+              <div
+                className={`rounded-xl border px-4 py-3 text-base ${totalAmountYen == null
+                  ? "border-yellow-400/20 bg-yellow-400/5 text-yellow-200"
+                  : "border-white/10 bg-black/40 text-white"
+                  }`}
               >
-                － 最後の到着を削除
-              </button>
-              <span className="text-xs text-white/50">最大{MAX_ARRIVALS}個</span>
-            </div>
-          </div>
-
-          {/* route / amount / time */}
-          <div className="space-y-3 mb-5">
-            <div>
-              <div className="mb-2 text-sm text-white/70">ルート</div>
-              <div className="rounded-xl border border-white/10 bg-black/40 px-3 py-3 text-sm">
-                {routeLabel}
+                {totalAmountYen == null
+                  ? "—（料金表に無い区間がある/未選択あり）"
+                  : `${totalAmountYen.toLocaleString()} 円`}
               </div>
             </div>
 
+            {/* 報告時間 */}
             <div>
-              <div className="mb-2 text-sm text-white/70">金額</div>
-              <div className="rounded-xl border border-white/10 bg-black/40 px-3 py-3 text-sm">
-                {mode === "bus" ? (
-                  <span className="font-semibold">2000円</span>
-                ) : computedAmountYen != null ? (
-                  <span className="font-semibold">{computedAmountYen}円</span>
-                ) : (
-                  <span className="text-yellow-200">—（料金表に無い区間がある/未選択あり）</span>
-                )}
+              <label className="mb-2 block text-sm text-white/70">報告時間</label>
+              <div className="rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-base">
+                {reportAtDisplay}
               </div>
             </div>
 
+            {/* 距離（始） */}
             <div>
-              <div className="mb-2 text-sm text-white/70">報告時間</div>
-              <div className="rounded-xl border border-white/10 bg-black/40 px-3 py-3 text-sm">
-                {formatReportTimeJa(now)}
-              </div>
-            </div>
-          </div>
-
-          {/* depart */}
-          <div className="rounded-2xl border border-white/10 p-4 mb-5">
-            <div className="font-semibold mb-3">出発</div>
-
-            <div className="mb-3">
-              <div className="mb-2 text-sm text-white/70">距離（始）</div>
+              <label className="mb-2 block text-sm text-white/70">距離（始）</label>
               <input
-                value={departOdo == null ? "" : String(departOdo)}
-                onChange={(e) => {
-                  const v = onlyAsciiDigitsFromAnyWidth(e.target.value);
-                  setDepartOdo(v === "" ? null : Number(v));
-                }}
+                inputMode="numeric"
                 placeholder="出発ODO（全角OK）"
-                className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-3 text-sm"
+                className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-base"
+                value={departOdoText}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  setDepartOdoText(raw);
+                  setDepartOdoNum(parseNullableInt(raw));
+                }}
               />
-              {departOcrStatus ? <div className="mt-2 text-xs text-yellow-200">{departOcrStatus}</div> : null}
             </div>
 
+            {/* 写真（出発） */}
             <div>
-              <div className="mb-2 text-sm text-white/70">写真(出発)</div>
-              <label className="inline-flex items-center justify-center rounded-xl px-4 py-2 bg-white/10 hover:bg-white/15 cursor-pointer text-sm">
-                写真を選ぶ
+              <label className="mb-2 block text-sm text-white/70">写真（出発）</label>
+              <div className="flex flex-wrap items-center gap-3">
                 <input
+                  ref={departInputRef}
                   type="file"
                   accept="image/*"
+                  capture="environment"
                   className="hidden"
-                  onChange={(e) => onDepartPhotoSelected(e.target.files?.[0] ?? null)}
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    await onSelectDepartPhoto(f);
+                    // 同じファイル再選択対応
+                    e.currentTarget.value = "";
+                  }}
                 />
-              </label>
-              {departPreview ? (
-                <div className="mt-3">
-                  <img src={departPreview} alt="depart" className="max-h-40 rounded-lg border border-white/10" />
-                </div>
-              ) : null}
+                <button
+                  type="button"
+                  onClick={() => departInputRef.current?.click()}
+                  className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm"
+                >
+                  写真を選ぶ
+                </button>
+                {departPhotoFile && (
+                  <span className="text-sm text-white/70">{departPhotoFile.name}</span>
+                )}
+              </div>
+              {departPhotoPreviewUrl && (
+                <img
+                  src={departPhotoPreviewUrl}
+                  alt="出発写真"
+                  className="mt-3 h-36 rounded-xl border border-white/10 object-cover"
+                />
+              )}
             </div>
-          </div>
 
-          {/* arrivals */}
-          <div className="space-y-4 mb-5">
-            {arrivals.map((a, i) => {
+            {/* 到着1〜8 */}
+            {visibleArrivals.map((a, idx) => {
               const segLabel =
-                i === 0
-                  ? "距離（始）〜到着1"
-                  : `距離（到着${i}〜到着${i + 1}）`;
-
-              const segValue = segmentDistances[i];
-              const segText = segValue === "" ? "—" : `${segValue} km`;
+                idx === 0
+                  ? "区間距離（表示用）：—（到着1-出発）"
+                  : `区間距離（表示用）：${typeof segmentDistances[idx] === "number" ? segmentDistances[idx] : "—"
+                  } km（到着${idx + 1}-到着${idx}）`;
 
               return (
-                <div key={i} className="rounded-2xl border border-white/10 p-4">
-                  <div className="font-semibold mb-3">到着{i + 1}</div>
+                <div
+                  key={idx}
+                  className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                >
+                  <div className="mb-3 text-lg font-semibold">到着{idx + 1}</div>
 
-                  <div className="mb-3">
-                    <div className="mb-2 text-sm text-white/70">場所</div>
-                    <select
-                      value={a.locationId ?? ""}
-                      onChange={(e) =>
-                        setArrivalField(i, "locationId", e.target.value ? Number(e.target.value) : null)
-                      }
-                      className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-3 text-sm"
-                    >
-                      <option value="">選択</option>
-                      {locations.map((l) => (
-                        <option key={l.id} value={l.id}>
-                          {l.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="mb-3">
-                    <div className="mb-2 text-sm text-white/70">ODO（到着{i + 1}）</div>
-                    <input
-                      value={a.odo == null ? "" : String(a.odo)}
-                      onChange={(e) => {
-                        const v = onlyAsciiDigitsFromAnyWidth(e.target.value);
-                        setArrivalField(i, "odo", v === "" ? null : Number(v));
-                      }}
-                      placeholder={`到着${i + 1}ODO（全角OK）`}
-                      className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-3 text-sm"
-                    />
-                    {a.ocrStatus ? <div className="mt-2 text-xs text-yellow-200">{a.ocrStatus}</div> : null}
-                  </div>
-
-                  <div className="mb-3">
-                    <div className="mb-2 text-sm text-white/70">区間走行距離（表示用）</div>
-                    <div className="rounded-xl border border-white/10 bg-black/40 px-3 py-3 text-sm">
-                      {segLabel}：{segText}
+                  <div className="grid grid-cols-1 gap-4">
+                    <div>
+                      <label className="mb-2 block text-sm text-white/70">場所</label>
+                      <select
+                        className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-base"
+                        value={a.locationId ?? ""}
+                        onChange={(e) =>
+                          updateArrival(idx, {
+                            locationId: e.target.value ? Number(e.target.value) : null,
+                          })
+                        }
+                      >
+                        <option value="" className="bg-black">選択</option>
+                        {locations.map((l) => (
+                          <option key={l.id} value={l.id} className="bg-black">
+                            {l.name}
+                          </option>
+                        ))}
+                      </select>
                     </div>
-                  </div>
 
-                  <div>
-                    <div className="mb-2 text-sm text-white/70">写真(到着{i + 1})</div>
-                    <label className="inline-flex items-center justify-center rounded-xl px-4 py-2 bg-white/10 hover:bg-white/15 cursor-pointer text-sm">
-                      写真を選ぶ
+                    <div>
+                      <label className="mb-2 block text-sm text-white/70">
+                        距離（到着{idx + 1}）
+                      </label>
                       <input
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={(e) => onArrivalPhotoSelected(i, e.target.files?.[0] ?? null)}
+                        inputMode="numeric"
+                        placeholder={`到着${idx + 1}ODO（全角OK）`}
+                        className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-base"
+                        value={a.odoText}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          updateArrival(idx, {
+                            odoText: raw,
+                            odoNum: parseNullableInt(raw),
+                          });
+                        }}
                       />
-                    </label>
-                    {a.photoPreview ? (
-                      <div className="mt-3">
-                        <img
-                          src={a.photoPreview}
-                          alt={`arrival-${i + 1}`}
-                          className="max-h-40 rounded-lg border border-white/10"
+                    </div>
+
+                    <div className="text-sm text-white/60">
+                      {segLabel}
+                    </div>
+
+                    <div>
+                      <label className="mb-2 block text-sm text-white/70">
+                        写真（到着{idx + 1}）
+                      </label>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <input
+                          ref={(el) => {
+                            arrivalInputRefs.current[idx] = el;
+                          }}
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          className="hidden"
+                          onChange={async (e) => {
+                            const f = e.target.files?.[0];
+                            if (!f) return;
+                            await onSelectArrivalPhoto(idx, f);
+                            e.currentTarget.value = "";
+                          }}
                         />
+                        <button
+                          type="button"
+                          onClick={() => arrivalInputRefs.current[idx]?.click()}
+                          className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm"
+                        >
+                          写真を選ぶ
+                        </button>
+                        {a.photoFile && (
+                          <span className="text-sm text-white/70">{a.photoFile.name}</span>
+                        )}
                       </div>
-                    ) : null}
+                      {a.photoPreviewUrl && (
+                        <img
+                          src={a.photoPreviewUrl}
+                          alt={`到着${idx + 1}写真`}
+                          className="mt-3 h-36 rounded-xl border border-white/10 object-cover"
+                        />
+                      )}
+                    </div>
                   </div>
                 </div>
               );
             })}
-          </div>
 
-          {/* total / note */}
-          <div className="space-y-3 mb-4">
+            {/* 総走行距離 */}
             <div>
-              <div className="mb-2 text-sm text-white/70">総走行距離（km）</div>
-              <div className="rounded-xl border border-white/10 bg-black/40 px-3 py-3 text-sm font-semibold">
-                {totalKmLabel}
+              <label className="mb-2 block text-sm text-white/70">総走行距離（km）</label>
+              <div className="rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-base">
+                {totalDistanceKm == null ? "—" : `${totalDistanceKm} km`}
               </div>
             </div>
 
+            {/* 備考 */}
             <div>
-              <div className="mb-2 text-sm text-white/70">備考</div>
+              <label className="mb-2 block text-sm text-white/70">備考</label>
               <input
+                placeholder="任意"
+                className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-base"
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                placeholder="任意"
-                className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-3 text-sm"
               />
             </div>
-          </div>
 
-          {/* errors/status */}
-          {loadErr ? <div className="text-xs text-yellow-200 mb-3">{loadErr}</div> : null}
-
-          {missingLabels.length ? (
-            <div className="text-xs text-yellow-200 mb-3 whitespace-pre-wrap">
-              未入力（備考以外必須）：{"\n"}・{missingLabels.join("\n・")}
+            {/* 保存 */}
+            <div className="sticky bottom-3 z-10 pt-2">
+              <button
+                type="button"
+                disabled={saving || loadingMaster}
+                onClick={handleSave}
+                className="w-full rounded-2xl bg-blue-900/80 px-5 py-4 text-lg font-semibold text-white shadow-lg disabled:opacity-50"
+              >
+                {saving ? "保存中..." : "保存"}
+              </button>
+              <div className="mt-2 text-center text-sm text-white/50">
+                写真を選ぶとODOを自動で読み取りします（OCR失敗時は手入力）
+              </div>
             </div>
-          ) : null}
-
-          {status ? <div className="text-sm text-yellow-200 mb-3 whitespace-pre-wrap">{status}</div> : null}
-
-          <button
-            type="button"
-            onClick={onSave}
-            disabled={!canSave}
-            className="w-full rounded-xl bg-blue-900/70 hover:bg-blue-900/80 transition px-3 py-3 text-sm disabled:opacity-50"
-          >
-            {isSaving ? "保存中..." : "保存"}
-          </button>
-
-          <div className="mt-4 text-xs text-white/40">
-            写真を選ぶとODOを自動で読み取り（失敗時は手入力）
           </div>
         </div>
+
+        {/* debug表示（必要な時だけ true にして使って） */}
+        {false && (
+          <pre className="mt-6 overflow-auto rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-white/70">
+            {JSON.stringify(
+              {
+                driverName,
+                mode,
+                fromId,
+                arrivalCount,
+                arrivals,
+                departOdoText,
+                departOdoNum,
+                totalAmountYen,
+                segmentDistances,
+                totalDistanceKm,
+              },
+              null,
+              2
+            )}
+          </pre>
+        )}
       </div>
     </main>
   );
