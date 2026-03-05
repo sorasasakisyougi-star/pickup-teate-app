@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import Tesseract from "tesseract.js";
 import { supabase } from "@/lib/supabaseClient";
 
 /** ========= types ========= */
@@ -120,7 +119,6 @@ const MAX_ARRIVALS = 8;
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
-
 function formatReportTimeJa(date: Date) {
   const y = date.getFullYear() % 100;
   const m = date.getMonth() + 1;
@@ -129,7 +127,6 @@ function formatReportTimeJa(date: Date) {
   const mm = pad2(date.getMinutes());
   return `${y}年${m}月${d}日${hh}時${mm}分（自動）`;
 }
-
 function formatDateTimeForExcel(date: Date) {
   const y = date.getFullYear();
   const m = date.getMonth() + 1;
@@ -138,32 +135,27 @@ function formatDateTimeForExcel(date: Date) {
   const mm = pad2(date.getMinutes());
   return `${y}/${m}/${d} ${hh}:${mm}`;
 }
-
 function toHalfWidthDigits(s: string) {
   return (s ?? "").replace(/[０-９]/g, (ch) =>
     String.fromCharCode(ch.charCodeAt(0) - 0xfee0)
   );
 }
-
 function onlyAsciiDigitsFromAnyWidth(s: string) {
   const half = toHalfWidthDigits(s);
   return half.replace(/[^\d]/g, "");
 }
-
 function asCell(v: unknown): string | number | "" {
   if (v == null) return "";
   if (typeof v === "number") return Number.isFinite(v) ? v : "";
   const s = String(v).trim();
   return s === "" ? "" : s;
 }
-
 function calcSeg(from: number | null, to: number | null): number | "" {
   if (from == null || to == null) return "";
   const d = to - from;
   if (!Number.isFinite(d)) return "";
   return d >= 0 ? d : "";
 }
-
 function sumSegs(values: Array<number | "">): number | "" {
   const nums = values.filter(
     (v): v is number => typeof v === "number" && Number.isFinite(v)
@@ -171,7 +163,6 @@ function sumSegs(values: Array<number | "">): number | "" {
   if (!nums.length) return "";
   return nums.reduce((a, b) => a + b, 0);
 }
-
 function emptyArrival(): ArrivalInput {
   return {
     locationId: null,
@@ -182,67 +173,31 @@ function emptyArrival(): ArrivalInput {
     ocrStatus: "",
   };
 }
-
 function uniqStrings(arr: string[]) {
   return [...new Set(arr.map((s) => s.trim()).filter(Boolean))];
 }
 
-function normalizeOcrText(text: string) {
-  return toHalfWidthDigits(text ?? "")
-    .replace(/[OoＯｏ]/g, "0")
-    .replace(/[IlIｌ｜]/g, "1");
-}
-
-function pickBestDigits(text: string) {
-  const normalized = normalizeOcrText(text).replace(/\s/g, "");
-  const cands = (normalized.match(/\d{3,9}/g) ?? []).map(String);
-  if (!cands.length) return null;
+// 候補スコア（メーターはだいたい5〜7桁が多い）
+function pickBestCandidateFromList(cands: string[]) {
+  const clean = (cands ?? []).map((s) => String(s).replace(/[^\d]/g, "")).filter(Boolean);
+  if (!clean.length) return null;
 
   const score = (s: string) => {
-    let sc = 0;
     const n = s.length;
+    let sc = 0;
     if (n === 6) sc += 12;
     else if (n === 5 || n === 7) sc += 10;
     else if (n === 4 || n === 8) sc += 6;
-    else sc += 2;
+    else sc += 1;
     if (s.startsWith("0")) sc -= 1;
     sc += Math.min(new Set(s.split("")).size, 6);
     return sc;
   };
 
-  return cands.sort((a, b) => score(b) - score(a))[0];
+  return clean.sort((a, b) => score(b) - score(a))[0];
 }
 
-async function runGoogleVisionOcr(fileOrBlob: File | Blob) {
-  const fd = new FormData();
-  const file =
-    fileOrBlob instanceof File
-      ? fileOrBlob
-      : new File([fileOrBlob], "meter.jpg", { type: "image/jpeg" });
-
-  fd.append("image", file);
-
-  const resp = await fetch("/api/ocr/google", {
-    method: "POST",
-    body: fd,
-  });
-
-  const data = (await resp.json()) as GoogleOcrResponse;
-
-  if (!resp.ok || !data?.ok) {
-    throw new Error(data?.error || "Google OCR failed");
-  }
-
-  return {
-    rawText: String(data.rawText ?? ""),
-    normalizedText: String(data.normalizedText ?? ""),
-    candidates: Array.isArray(data.candidates) ? data.candidates.map(String) : [],
-    bestCandidate:
-      typeof data.bestCandidate === "string" ? data.bestCandidate : null,
-  };
-}
-
-/** OCR保護エリア（触らない） */
+/** OCR保護エリア（ここはそのまま） */
 async function cropMeterArea(file: File): Promise<Blob> {
   const img = document.createElement("img");
   img.src = URL.createObjectURL(file);
@@ -280,6 +235,26 @@ async function cropMeterArea(file: File): Promise<Blob> {
   return blob;
 }
 
+/** Google OCR呼び出し（FormData: image） */
+async function callGoogleOcr(imageFile: File): Promise<GoogleOcrResponse> {
+  const fd = new FormData();
+  fd.append("image", imageFile);
+
+  const res = await fetch("/api/ocr/google", { method: "POST", body: fd });
+  const text = await res.text();
+  let j: any = null;
+  try {
+    j = text ? JSON.parse(text) : null;
+  } catch {
+    j = null;
+  }
+
+  if (!res.ok) {
+    return { ok: false, error: j?.error || text || `HTTP ${res.status}` };
+  }
+  return (j ?? { ok: false, error: "empty response" }) as GoogleOcrResponse;
+}
+
 /** ========= main ========= */
 export default function Page() {
   const [mode, setMode] = useState<Mode>("route");
@@ -289,7 +264,7 @@ export default function Page() {
   const [fares, setFares] = useState<FareRow[]>([]);
   const [loadErr, setLoadErr] = useState("");
 
-  // driver (editable / localStorage)
+  // driver
   const [driverNames, setDriverNames] = useState<string[]>([]);
   const [driverName, setDriverName] = useState<string>("");
   const [newDriverName, setNewDriverName] = useState("");
@@ -361,7 +336,6 @@ export default function Page() {
   function addDriver() {
     const name = newDriverName.trim();
     if (!name) return;
-
     setDriverNames((prev) => uniqStrings([...prev, name]));
     setDriverName(name);
     setNewDriverName("");
@@ -540,11 +514,9 @@ export default function Page() {
       return next;
     });
   }
-
   function addArrival() {
     setArrivalCount((c) => Math.min(MAX_ARRIVALS, c + 1));
   }
-
   function removeLastArrival() {
     setArrivals((prev) => {
       const next = [...prev];
@@ -557,103 +529,60 @@ export default function Page() {
     setArrivalCount((c) => Math.max(1, c - 1));
   }
 
-  /** ========= OCR ========= */
-  async function recognizeOdoWithFallback(file: File): Promise<{
-    ok: boolean;
-    value: number | null;
-    source: "google" | "tesseract" | "none";
-    message: string;
-  }> {
-    const cropped = await cropMeterArea(file);
-
-    // 1) Google Vision (優先)
-    try {
-      const g = await runGoogleVisionOcr(cropped);
-      const best = g.bestCandidate ?? pickBestDigits(g.normalizedText || g.rawText || "");
-
-      if (best) {
-        const num = Number(best);
-        if (Number.isFinite(num)) {
-          return {
-            ok: true,
-            value: num,
-            source: "google",
-            message: `OCR成功(Google): ${best}`,
-          };
-        }
-      }
-    } catch (e) {
-      console.warn("[google ocr fallback]", e);
-    }
-
-    // 2) Tesseract (保険)
-    try {
-      const result = await Tesseract.recognize(cropped, "eng", {
-        tessedit_char_whitelist: "0123456789",
-      } as any);
-
-      const raw = result?.data?.text ?? "";
-      const best = pickBestDigits(String(raw));
-
-      if (!best) {
-        return {
-          ok: false,
-          value: null,
-          source: "none",
-          message: "OCR失敗：数字が見つからない（近づけて/ブレ減らして）",
-        };
-      }
-
-      const num = Number(best);
-      if (!Number.isFinite(num)) {
-        return {
-          ok: false,
-          value: null,
-          source: "none",
-          message: "OCR結果が不正（数字に変換できない）",
-        };
-      }
-
-      return {
-        ok: true,
-        value: num,
-        source: "tesseract",
-        message: `OCR成功(Tesseract): ${best}`,
-      };
-    } catch (e: any) {
-      const msg = e?.message ? String(e.message) : "OCRでエラー";
-      return { ok: false, value: null, source: "none", message: msg };
-    }
-  }
-
-  async function runOcr(file: File, target: "depart" | number) {
+  /** ========= OCR（Google強化版：切り抜き→元画像の2段階） ========= */
+  async function runOcrGoogleStrong(file: File, target: "depart" | number) {
     const key = target === "depart" ? "depart" : `arrive-${target}`;
     if (ocrBusyKey) return;
 
     setOcrBusyKey(key);
+    const setMsg = (msg: string) => {
+      if (target === "depart") setDepartOcrStatus(msg);
+      else updateArrival(target, { ocrStatus: msg });
+    };
+    const setOdo = (num: number, msg: string) => {
+      if (target === "depart") {
+        setDepartOdo(num);
+        setDepartOcrStatus(msg);
+      } else {
+        updateArrival(target, { odo: num, ocrStatus: msg });
+      }
+    };
 
-    if (target === "depart") setDepartOcrStatus("OCR中…（Google優先 / 失敗時Tesseract）");
-    else updateArrival(target, { ocrStatus: "OCR中…（Google優先 / 失敗時Tesseract）" });
+    setMsg("OCR中…（Google / まず切り抜き）");
 
     try {
-      const result = await recognizeOdoWithFallback(file);
+      // 1) 切り抜き画像で試す（従来どおり）
+      const croppedBlob = await cropMeterArea(file);
+      const croppedFile = new File([croppedBlob], "meter-crop.jpg", { type: "image/jpeg" });
 
-      if (!result.ok || result.value == null) {
-        if (target === "depart") setDepartOcrStatus(result.message);
-        else updateArrival(target, { ocrStatus: result.message });
+      let r = await callGoogleOcr(croppedFile);
+      let best = pickBestCandidateFromList(
+        [r.bestCandidate ?? "", ...(r.candidates ?? [])].filter(Boolean)
+      );
+
+      // 2) ダメなら元画像でもう一回（切り抜きズレ救済）
+      if (!best) {
+        setMsg(`OCR再試行…（元画像）`);
+        r = await callGoogleOcr(file);
+        best = pickBestCandidateFromList(
+          [r.bestCandidate ?? "", ...(r.candidates ?? [])].filter(Boolean)
+        );
+      }
+
+      if (!best) {
+        setMsg(`OCR失敗：数字が見つからない（近づけて/ブレ減らして）`);
         return;
       }
 
-      if (target === "depart") {
-        setDepartOdo(result.value);
-        setDepartOcrStatus(result.message);
-      } else {
-        updateArrival(target, { odo: result.value, ocrStatus: result.message });
+      const num = Number(best);
+      if (!Number.isFinite(num)) {
+        setMsg("OCR結果が不正（数字に変換できない）");
+        return;
       }
+
+      setOdo(num, `OCR成功(Google): ${best}`);
     } catch (e: any) {
-      const msg = e?.message ? String(e.message) : "OCRでエラー";
-      if (target === "depart") setDepartOcrStatus(msg);
-      else updateArrival(target, { ocrStatus: msg });
+      setMsg(e?.message ? String(e.message) : "OCRでエラー");
     } finally {
       setOcrBusyKey(null);
     }
@@ -661,7 +590,7 @@ export default function Page() {
 
   useEffect(() => {
     if (!departPhoto) return;
-    runOcr(departPhoto, "depart");
+    runOcrGoogleStrong(departPhoto, "depart");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [departPhoto]);
 
@@ -669,7 +598,7 @@ export default function Page() {
     for (let i = 0; i < arrivalCount; i++) {
       const a = arrivals[i];
       if (a.photoFile && !a.ocrStatus) {
-        runOcr(a.photoFile, i);
+        runOcrGoogleStrong(a.photoFile, i);
         break;
       }
     }
@@ -875,9 +804,6 @@ export default function Page() {
         到着写真URL到着７: arrivalPhotoUrls[6] ?? "",
         到着写真URL到着８: arrivalPhotoUrls[7] ?? "",
       };
-
-      console.log("=== FLOW PAYLOAD ===");
-      console.log(JSON.stringify(flowPayload, null, 2));
 
       try {
         await postToFlow(flowPayload);
@@ -1087,7 +1013,9 @@ export default function Page() {
                 placeholder="例: １１２６０３（全角OK）"
                 className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"
               />
-              {departOcrStatus ? <div className="mt-2 text-xs text-yellow-200">{departOcrStatus}</div> : null}
+              {departOcrStatus ? (
+                <div className="mt-2 text-xs text-yellow-200">{departOcrStatus}</div>
+              ) : null}
             </div>
 
             <div className="text-sm text-white/70 mt-2">写真(出発)</div>
@@ -1286,7 +1214,7 @@ export default function Page() {
           </button>
 
           <div className="mt-3 text-center text-xs text-white/40">
-            写真を選ぶとODOを自動で読み取ります（Google優先 / 失敗時Tesseract）
+            写真を選ぶとODOを自動で読み取ります（Google強化：切り抜き→元画像）
           </div>
         </div>
       </div>
