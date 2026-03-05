@@ -29,8 +29,9 @@ type ArrivalInput = {
   photoFile: File | null;
   photoPreview: string | null;
   photoUploadedUrl: string | null;
-  ocrStatus: string;
-  ocrCandidates: string[]; // 追加：候補（手選択用）
+
+  // UIには出さないが、OCRの実行制御に使う
+  ocrDone: boolean;
 };
 
 type FlowPayload = {
@@ -120,6 +121,7 @@ const MAX_ARRIVALS = 8;
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
+
 function formatReportTimeJa(date: Date) {
   const y = date.getFullYear() % 100;
   const m = date.getMonth() + 1;
@@ -128,6 +130,7 @@ function formatReportTimeJa(date: Date) {
   const mm = pad2(date.getMinutes());
   return `${y}年${m}月${d}日${hh}時${mm}分（自動）`;
 }
+
 function formatDateTimeForExcel(date: Date) {
   const y = date.getFullYear();
   const m = date.getMonth() + 1;
@@ -136,27 +139,32 @@ function formatDateTimeForExcel(date: Date) {
   const mm = pad2(date.getMinutes());
   return `${y}/${m}/${d} ${hh}:${mm}`;
 }
+
 function toHalfWidthDigits(s: string) {
   return (s ?? "").replace(/[０-９]/g, (ch) =>
     String.fromCharCode(ch.charCodeAt(0) - 0xfee0)
   );
 }
+
 function onlyAsciiDigitsFromAnyWidth(s: string) {
   const half = toHalfWidthDigits(s);
   return half.replace(/[^\d]/g, "");
 }
+
 function asCell(v: unknown): string | number | "" {
   if (v == null) return "";
   if (typeof v === "number") return Number.isFinite(v) ? v : "";
   const s = String(v).trim();
   return s === "" ? "" : s;
 }
+
 function calcSeg(from: number | null, to: number | null): number | "" {
   if (from == null || to == null) return "";
   const d = to - from;
   if (!Number.isFinite(d)) return "";
   return d >= 0 ? d : "";
 }
+
 function sumSegs(values: Array<number | "">): number | "" {
   const nums = values.filter(
     (v): v is number => typeof v === "number" && Number.isFinite(v)
@@ -164,6 +172,7 @@ function sumSegs(values: Array<number | "">): number | "" {
   if (!nums.length) return "";
   return nums.reduce((a, b) => a + b, 0);
 }
+
 function uniqStrings(arr: string[]) {
   return [...new Set(arr.map((s) => s.trim()).filter(Boolean))];
 }
@@ -175,13 +184,12 @@ function emptyArrival(): ArrivalInput {
     photoFile: null,
     photoPreview: null,
     photoUploadedUrl: null,
-    ocrStatus: "",
-    ocrCandidates: [],
+    ocrDone: false,
   };
 }
 
 /**
- * 重要：ODO候補の選び方（誤爆対策）
+ * ODO候補の選び方（誤爆対策）
  * - まず 5〜7桁だけ採用（ODO想定）
  * - それが無ければ全体から「6桁優先」で採用
  */
@@ -209,18 +217,6 @@ function pickBestCandidateFromList(cands: string[]) {
   };
 
   return pool.sort((a, b) => score(b) - score(a))[0];
-}
-
-function normalizeCandidateList(cands: string[]) {
-  const clean = (cands ?? [])
-    .map((s) => String(s).replace(/[^\d]/g, ""))
-    .filter(Boolean);
-
-  // できれば5〜7桁だけを先頭に並べる（手選択しやすく）
-  const preferred = clean.filter((s) => s.length >= 5 && s.length <= 7);
-  const others = clean.filter((s) => s.length < 5 || s.length > 7);
-
-  return uniqStrings([...preferred, ...others]).slice(0, 8);
 }
 
 /** OCR保護エリア（触らない） */
@@ -309,8 +305,6 @@ export default function Page() {
   const [departOdo, setDepartOdo] = useState<number | null>(null);
   const [departPhoto, setDepartPhoto] = useState<File | null>(null);
   const [departPreview, setDepartPreview] = useState<string | null>(null);
-  const [departOcrStatus, setDepartOcrStatus] = useState("");
-  const [departOcrCandidates, setDepartOcrCandidates] = useState<string[]>([]);
 
   // ui
   const [note, setNote] = useState("");
@@ -510,20 +504,6 @@ export default function Page() {
     return false;
   }, [arrivalCount, arrivals, departOdo, totalDistanceKm]);
 
-  const distanceHint = useMemo(() => {
-    for (let i = 0; i < arrivalCount; i++) {
-      const prev = i === 0 ? departOdo : arrivals[i - 1]?.odo ?? null;
-      const cur = arrivals[i]?.odo ?? null;
-      if (prev != null && cur != null && cur < prev) {
-        return `⚠ 到着${i + 1}ODOが前より小さい（手入力で修正推奨）`;
-      }
-    }
-    if (typeof totalDistanceKm === "number" && totalDistanceKm >= DIFF_LIMIT_KM) {
-      return `⚠ 総走行距離が${DIFF_LIMIT_KM}km以上（保存不可）`;
-    }
-    return "";
-  }, [arrivalCount, arrivals, departOdo, totalDistanceKm]);
-
   /** ========= preview ========= */
   useEffect(() => {
     if (!departPhoto) {
@@ -543,9 +523,11 @@ export default function Page() {
       return next;
     });
   }
+
   function addArrival() {
     setArrivalCount((c) => Math.min(MAX_ARRIVALS, c + 1));
   }
+
   function removeLastArrival() {
     setArrivals((prev) => {
       const next = [...prev];
@@ -558,36 +540,28 @@ export default function Page() {
     setArrivalCount((c) => Math.max(1, c - 1));
   }
 
-  /** ========= OCR（Google強化：切り抜き→元画像 + 桁数優先 + 候補表示） ========= */
+  /** ========= OCR（Google強化：切り抜き→元画像 / UIに文言は出さない） ========= */
   async function runOcrGoogleStrong(file: File, target: "depart" | number) {
     const key = target === "depart" ? "depart" : `arrive-${target}`;
     if (ocrBusyKey) return;
 
     setOcrBusyKey(key);
 
-    const setMsg = (msg: string) => {
-      if (target === "depart") setDepartOcrStatus(msg);
-      else updateArrival(target, { ocrStatus: msg });
-    };
-    const setCandidates = (cands: string[]) => {
-      const list = normalizeCandidateList(cands);
-      if (target === "depart") setDepartOcrCandidates(list);
-      else updateArrival(target, { ocrCandidates: list });
-    };
-    const applyOdo = (num: number, best: string) => {
+    const applyOdo = (num: number) => {
       if (target === "depart") {
         setDepartOdo(num);
-        setDepartOcrStatus(`OCR成功(Google): ${best}`);
       } else {
-        updateArrival(target, { odo: num, ocrStatus: `OCR成功(Google): ${best}` });
+        updateArrival(target, { odo: num });
       }
     };
 
-    // 初期化
-    setMsg("OCR中…（Google / まず切り抜き）");
-    setCandidates([]);
-    if (target === "depart") setDepartOdo((prev) => prev); // noop
-    else updateArrival(target, { odo: (target as number) >= 0 ? arrivals[target as number]?.odo ?? null : null });
+    const markDone = () => {
+      if (target === "depart") {
+        // departは photo change で自然に再OCRされるのでフラグ不要
+        return;
+      }
+      updateArrival(target, { ocrDone: true });
+    };
 
     try {
       // 1) 切り抜き
@@ -596,33 +570,32 @@ export default function Page() {
 
       let r = await callGoogleOcr(croppedFile);
       let cands = [r.bestCandidate ?? "", ...(r.candidates ?? [])].filter(Boolean);
-      setCandidates(cands);
-
       let best = pickBestCandidateFromList(cands);
 
       // 2) ダメなら元画像で再試行
       if (!best) {
-        setMsg("OCR再試行…（元画像）");
         r = await callGoogleOcr(file);
         cands = [r.bestCandidate ?? "", ...(r.candidates ?? [])].filter(Boolean);
-        setCandidates(cands);
         best = pickBestCandidateFromList(cands);
       }
 
       if (!best) {
-        setMsg("OCR失敗：ODOっぽい桁の数字が見つからない（候補から選ぶか手入力）");
+        // UIに失敗文言は出さない（手入力で対応）
+        markDone();
         return;
       }
 
       const num = Number(best);
       if (!Number.isFinite(num)) {
-        setMsg("OCR結果が不正（数字に変換できない）");
+        markDone();
         return;
       }
 
-      applyOdo(num, best);
-    } catch (e: any) {
-      setMsg(e?.message ? String(e.message) : "OCRでエラー");
+      applyOdo(num);
+      markDone();
+    } catch {
+      // UIにエラー文言は出さない
+      markDone();
     } finally {
       setOcrBusyKey(null);
     }
@@ -637,7 +610,7 @@ export default function Page() {
   useEffect(() => {
     for (let i = 0; i < arrivalCount; i++) {
       const a = arrivals[i];
-      if (a.photoFile && !a.ocrStatus) {
+      if (a.photoFile && !a.ocrDone) {
         runOcrGoogleStrong(a.photoFile, i);
         break;
       }
@@ -690,7 +663,7 @@ export default function Page() {
     }
   }
 
-  /** ========= validation ========= */
+  /** ========= validation（UIに一覧は出さない） ========= */
   const missingLabels = useMemo(() => {
     const miss: string[] = [];
 
@@ -735,7 +708,8 @@ export default function Page() {
     setStatus("");
 
     if (missingLabels.length) {
-      setStatus(`未入力があります：\n・${missingLabels.join("\n・")}`);
+      // UIに詳細は出さない。必要なら alert にしてもいいが、今回は無表示。
+      setStatus("備考以外に未入力があるため保存できません");
       return;
     }
 
@@ -801,11 +775,7 @@ export default function Page() {
         i < arrivalCount ? idToName(arrivals[i].locationId) : ""
       );
 
-      const [s1, s2, s3, s4, s5, s6, s7, s8] = useMemo(
-        () => segmentDistances,
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-        [segmentDistances]
-      );
+      const [s1, s2, s3, s4, s5, s6, s7, s8] = segmentDistances;
 
       const flowPayload: FlowPayload = {
         日付: reportAtExcel,
@@ -851,10 +821,10 @@ export default function Page() {
 
       try {
         await postToFlow(flowPayload);
-        setStatus("保存しました（Power Automateにも送信OK）");
+        setStatus("保存しました");
       } catch (e: any) {
         console.error("[flow send]", e);
-        setStatus(`保存しました（ただしPower Automate送信は失敗）: ${e?.message ?? "error"}`);
+        setStatus("保存しました（Power Automate送信は失敗）");
       }
 
       // reset
@@ -863,8 +833,6 @@ export default function Page() {
       setArrivals(Array.from({ length: MAX_ARRIVALS }, () => emptyArrival()));
       setDepartPhoto(null);
       setDepartOdo(null);
-      setDepartOcrStatus("");
-      setDepartOcrCandidates([]);
       setNote("");
     } catch (e: any) {
       setStatus(e?.message ?? "保存でエラー");
@@ -1038,7 +1006,8 @@ export default function Page() {
               ) : computedAmountYen != null ? (
                 <span className="font-semibold">{computedAmountYen.toLocaleString()}円</span>
               ) : (
-                <span className="text-white/60">—</span>              )
+                <span className="text-white/60">—</span>
+              )}
             </div>
 
             <div className="text-sm text-white/70 mt-2">報告時間</div>
@@ -1057,9 +1026,6 @@ export default function Page() {
                 placeholder="例: １１２６０３（全角OK）"
                 className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"
               />
-              
-
-              
             </div>
 
             <div className="text-sm text-white/70 mt-2">写真(出発)</div>
@@ -1072,8 +1038,6 @@ export default function Page() {
                 onChange={(e) => {
                   const f = e.target.files?.[0] ?? null;
                   setDepartPhoto(f);
-                  setDepartOcrStatus("");
-                  setDepartOcrCandidates([]);
                   e.currentTarget.value = "";
                 }}
               />
@@ -1104,7 +1068,8 @@ export default function Page() {
           {/* 到着1〜8 */}
           <div className="space-y-4 mt-6">
             {visibleArrivals.map((a, idx) => {
-              const segText = typeof segmentDistances[idx] === "number" ? `${segmentDistances[idx]} km` : "—";
+              const segText =
+                typeof segmentDistances[idx] === "number" ? `${segmentDistances[idx]} km` : "—";
 
               return (
                 <div key={`arrival-${idx}`} className="rounded-2xl border border-white/10 bg-black/20 p-4">
@@ -1141,7 +1106,6 @@ export default function Page() {
                         placeholder={`例: １１２８５０（到着${idx + 1} / 全角OK）`}
                         className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"
                       />
-                      
                     </div>
 
                     <div className="text-sm text-white/70 mt-2">区間距離</div>
@@ -1167,8 +1131,7 @@ export default function Page() {
                             updateArrival(idx, {
                               photoFile: null,
                               photoPreview: null,
-                              ocrStatus: "",
-                              ocrCandidates: [],
+                              ocrDone: false,
                             });
                             e.currentTarget.value = "";
                             return;
@@ -1179,8 +1142,7 @@ export default function Page() {
                             photoFile: f,
                             photoPreview: preview,
                             photoUploadedUrl: null,
-                            ocrStatus: "",
-                            ocrCandidates: [],
+                            ocrDone: false,
                           });
 
                           e.currentTarget.value = "";
@@ -1218,12 +1180,9 @@ export default function Page() {
           <div className="grid grid-cols-[78px_1fr] sm:grid-cols-[90px_1fr] items-start gap-3 mt-6">
             <div className="text-sm text-white/70 mt-2">総走行距離</div>
             <div className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm">
-              <div className="flex items-center gap-3 flex-wrap">
-                <span className="font-semibold">
-                  {typeof totalDistanceKm === "number" ? `${totalDistanceKm} km` : "—"}
-                </span>
-                {distanceHint ? <span className="text-xs text-yellow-200">{distanceHint}</span> : null}
-              </div>
+              <span className="font-semibold">
+                {typeof totalDistanceKm === "number" ? `${totalDistanceKm} km` : "—"}
+              </span>
             </div>
 
             <div className="text-sm text-white/70 mt-2">備考</div>
@@ -1235,11 +1194,8 @@ export default function Page() {
             />
           </div>
 
-          {loadErr ? <div className="text-xs text-yellow-200 mt-4">{loadErr}</div> : null}
-
-          
-
-          {status ? <div className="text-sm text-yellow-200 mt-4 whitespace-pre-wrap">{status}</div> : null}
+          {loadErr ? <div className="text-xs text-white/60 mt-4">{loadErr}</div> : null}
+          {status ? <div className="text-sm text-white/70 mt-4 whitespace-pre-wrap">{status}</div> : null}
 
           <button
             type="button"
@@ -1250,10 +1206,6 @@ export default function Page() {
           >
             {isSaving ? "保存中..." : "保存"}
           </button>
-
-          <div className="mt-3 text-center text-xs text-white/40">
-            写真を選ぶとODOを自動で読み取ります（Google強化：切り抜き→元画像 / ODO桁優先）
-          </div>
         </div>
       </div>
     </main>
