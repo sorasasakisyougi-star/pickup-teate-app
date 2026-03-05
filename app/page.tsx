@@ -1038,8 +1038,7 @@ export default function Page() {
               ) : computedAmountYen != null ? (
                 <span className="font-semibold">{computedAmountYen.toLocaleString()}円</span>
               ) : (
-                <span className="text-yellow-200">—（料金表に無い区間がある/未選択あり）</span>
-              )}
+                <span className="text-white/60">—</span>              )
             </div>
 
             <div className="text-sm text-white/70 mt-2">報告時間</div>
@@ -1058,30 +1057,9 @@ export default function Page() {
                 placeholder="例: １１２６０３（全角OK）"
                 className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"
               />
-              {departOcrStatus ? (
-                <div className="mt-2 text-xs text-yellow-200">{departOcrStatus}</div>
-              ) : null}
+              
 
-              {departOcrCandidates.length ? (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {departOcrCandidates.map((c) => (
-                    <button
-                      key={`depart-cand-${c}`}
-                      type="button"
-                      onClick={() => {
-                        const num = Number(c);
-                        if (!Number.isFinite(num)) return;
-                        setDepartOdo(num);
-                        setDepartOcrStatus(`候補を採用: ${c}`);
-                      }}
-                      className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs hover:bg-white/10"
-                      title="タップで採用"
-                    >
-                      {c}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
+              
             </div>
 
             <div className="text-sm text-white/70 mt-2">写真(出発)</div>
@@ -1163,29 +1141,7 @@ export default function Page() {
                         placeholder={`例: １１２８５０（到着${idx + 1} / 全角OK）`}
                         className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"
                       />
-                      {a.ocrStatus ? (
-                        <div className="mt-2 text-xs text-yellow-200">{a.ocrStatus}</div>
-                      ) : null}
-
-                      {a.ocrCandidates.length ? (
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {a.ocrCandidates.map((c) => (
-                            <button
-                              key={`arr-${idx}-cand-${c}`}
-                              type="button"
-                              onClick={() => {
-                                const num = Number(c);
-                                if (!Number.isFinite(num)) return;
-                                updateArrival(idx, { odo: num, ocrStatus: `候補を採用: ${c}` });
-                              }}
-                              className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs hover:bg-white/10"
-                              title="タップで採用"
-                            >
-                              {c}
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
+                      
                     </div>
 
                     <div className="text-sm text-white/70 mt-2">区間距離</div>
@@ -1281,11 +1237,7 @@ export default function Page() {
 
           {loadErr ? <div className="text-xs text-yellow-200 mt-4">{loadErr}</div> : null}
 
-          {missingLabels.length ? (
-            <div className="text-xs text-yellow-200 mt-4 whitespace-pre-wrap">
-              未入力（備考以外は必須）：{"\n"}・{missingLabels.join("\n・")}
-            </div>
-          ) : null}
+          
 
           {status ? <div className="text-sm text-yellow-200 mt-4 whitespace-pre-wrap">{status}</div> : null}
 
