@@ -75,6 +75,15 @@ type FlowPayload = {
   到着写真URL到着８: string;
 };
 
+type GoogleOcrResponse = {
+  ok: boolean;
+  rawText?: string;
+  normalizedText?: string;
+  candidates?: string[];
+  bestCandidate?: string | null;
+  error?: string;
+};
+
 /** ========= constants ========= */
 const DEFAULT_DRIVER_NAMES = [
   "拓哉",
@@ -178,8 +187,15 @@ function uniqStrings(arr: string[]) {
   return [...new Set(arr.map((s) => s.trim()).filter(Boolean))];
 }
 
+function normalizeOcrText(text: string) {
+  return toHalfWidthDigits(text ?? "")
+    .replace(/[OoＯｏ]/g, "0")
+    .replace(/[IlIｌ｜]/g, "1");
+}
+
 function pickBestDigits(text: string) {
-  const cands = (text.replace(/\s/g, "").match(/\d{3,9}/g) ?? []).map(String);
+  const normalized = normalizeOcrText(text).replace(/\s/g, "");
+  const cands = (normalized.match(/\d{3,9}/g) ?? []).map(String);
   if (!cands.length) return null;
 
   const score = (s: string) => {
@@ -195,6 +211,35 @@ function pickBestDigits(text: string) {
   };
 
   return cands.sort((a, b) => score(b) - score(a))[0];
+}
+
+async function runGoogleVisionOcr(fileOrBlob: File | Blob) {
+  const fd = new FormData();
+  const file =
+    fileOrBlob instanceof File
+      ? fileOrBlob
+      : new File([fileOrBlob], "meter.jpg", { type: "image/jpeg" });
+
+  fd.append("image", file);
+
+  const resp = await fetch("/api/ocr/google", {
+    method: "POST",
+    body: fd,
+  });
+
+  const data = (await resp.json()) as GoogleOcrResponse;
+
+  if (!resp.ok || !data?.ok) {
+    throw new Error(data?.error || "Google OCR failed");
+  }
+
+  return {
+    rawText: String(data.rawText ?? ""),
+    normalizedText: String(data.normalizedText ?? ""),
+    candidates: Array.isArray(data.candidates) ? data.candidates.map(String) : [],
+    bestCandidate:
+      typeof data.bestCandidate === "string" ? data.bestCandidate : null,
+  };
 }
 
 /** OCR保護エリア（触らない） */
@@ -513,18 +558,36 @@ export default function Page() {
   }
 
   /** ========= OCR ========= */
-  async function runOcr(file: File, target: "depart" | number) {
-    const key = target === "depart" ? "depart" : `arrive-${target}`;
-    if (ocrBusyKey) return;
+  async function recognizeOdoWithFallback(file: File): Promise<{
+    ok: boolean;
+    value: number | null;
+    source: "google" | "tesseract" | "none";
+    message: string;
+  }> {
+    const cropped = await cropMeterArea(file);
 
-    setOcrBusyKey(key);
-
-    if (target === "depart") setDepartOcrStatus("OCR中…（ODOの数字だけ）");
-    else updateArrival(target, { ocrStatus: "OCR中…（ODOの数字だけ）" });
-
+    // 1) Google Vision (優先)
     try {
-      const cropped = await cropMeterArea(file);
+      const g = await runGoogleVisionOcr(cropped);
+      const best = g.bestCandidate ?? pickBestDigits(g.normalizedText || g.rawText || "");
 
+      if (best) {
+        const num = Number(best);
+        if (Number.isFinite(num)) {
+          return {
+            ok: true,
+            value: num,
+            source: "google",
+            message: `OCR成功(Google): ${best}`,
+          };
+        }
+      }
+    } catch (e) {
+      console.warn("[google ocr fallback]", e);
+    }
+
+    // 2) Tesseract (保険)
+    try {
       const result = await Tesseract.recognize(cropped, "eng", {
         tessedit_char_whitelist: "0123456789",
       } as any);
@@ -533,25 +596,59 @@ export default function Page() {
       const best = pickBestDigits(String(raw));
 
       if (!best) {
-        const msg = "OCR失敗：数字が見つからない（近づけて/ブレ減らして）";
-        if (target === "depart") setDepartOcrStatus(msg);
-        else updateArrival(target, { ocrStatus: msg });
-        return;
+        return {
+          ok: false,
+          value: null,
+          source: "none",
+          message: "OCR失敗：数字が見つからない（近づけて/ブレ減らして）",
+        };
       }
 
       const num = Number(best);
       if (!Number.isFinite(num)) {
-        const msg = "OCR結果が不正（数字に変換できない）";
-        if (target === "depart") setDepartOcrStatus(msg);
-        else updateArrival(target, { ocrStatus: msg });
+        return {
+          ok: false,
+          value: null,
+          source: "none",
+          message: "OCR結果が不正（数字に変換できない）",
+        };
+      }
+
+      return {
+        ok: true,
+        value: num,
+        source: "tesseract",
+        message: `OCR成功(Tesseract): ${best}`,
+      };
+    } catch (e: any) {
+      const msg = e?.message ? String(e.message) : "OCRでエラー";
+      return { ok: false, value: null, source: "none", message: msg };
+    }
+  }
+
+  async function runOcr(file: File, target: "depart" | number) {
+    const key = target === "depart" ? "depart" : `arrive-${target}`;
+    if (ocrBusyKey) return;
+
+    setOcrBusyKey(key);
+
+    if (target === "depart") setDepartOcrStatus("OCR中…（Google優先 / 失敗時Tesseract）");
+    else updateArrival(target, { ocrStatus: "OCR中…（Google優先 / 失敗時Tesseract）" });
+
+    try {
+      const result = await recognizeOdoWithFallback(file);
+
+      if (!result.ok || result.value == null) {
+        if (target === "depart") setDepartOcrStatus(result.message);
+        else updateArrival(target, { ocrStatus: result.message });
         return;
       }
 
       if (target === "depart") {
-        setDepartOdo(num);
-        setDepartOcrStatus(`OCR成功: ${best}`);
+        setDepartOdo(result.value);
+        setDepartOcrStatus(result.message);
       } else {
-        updateArrival(target, { odo: num, ocrStatus: `OCR成功: ${best}` });
+        updateArrival(target, { odo: result.value, ocrStatus: result.message });
       }
     } catch (e: any) {
       const msg = e?.message ? String(e.message) : "OCRでエラー";
@@ -878,10 +975,11 @@ export default function Page() {
                         key={`chip-${n}`}
                         type="button"
                         onClick={() => removeDriver(n)}
-                        className={`rounded-full border px-3 py-1 text-xs transition ${driverName === n
-                          ? "border-blue-400/40 bg-blue-900/40 text-white"
-                          : "border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
-                          }`}
+                        className={`rounded-full border px-3 py-1 text-xs transition ${
+                          driverName === n
+                            ? "border-blue-400/40 bg-blue-900/40 text-white"
+                            : "border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
+                        }`}
                         title={`削除: ${n}`}
                       >
                         {n} <span className="ml-1 text-white/50">×</span>
@@ -902,16 +1000,18 @@ export default function Page() {
             <button
               type="button"
               onClick={() => setMode("route")}
-              className={`rounded-xl px-3 py-3 text-sm transition ${mode === "route" ? "bg-blue-900/70" : "bg-white/5 hover:bg-white/10"
-                }`}
+              className={`rounded-xl px-3 py-3 text-sm transition ${
+                mode === "route" ? "bg-blue-900/70" : "bg-white/5 hover:bg-white/10"
+              }`}
             >
               通常ルート
             </button>
             <button
               type="button"
               onClick={() => setMode("bus")}
-              className={`rounded-xl px-3 py-3 text-sm transition ${mode === "bus" ? "bg-blue-900/70" : "bg-white/5 hover:bg-white/10"
-                }`}
+              className={`rounded-xl px-3 py-3 text-sm transition ${
+                mode === "bus" ? "bg-blue-900/70" : "bg-white/5 hover:bg-white/10"
+              }`}
             >
               バス（固定）
             </button>
@@ -1186,7 +1286,7 @@ export default function Page() {
           </button>
 
           <div className="mt-3 text-center text-xs text-white/40">
-            写真を選ぶとODOを自動で読み取ります（OCR失敗時は手入力）
+            写真を選ぶとODOを自動で読み取ります（Google優先 / 失敗時Tesseract）
           </div>
         </div>
       </div>
