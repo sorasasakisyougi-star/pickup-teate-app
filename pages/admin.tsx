@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 type DriverRow = {
@@ -46,11 +47,34 @@ const styles = {
     margin: "0 auto",
   } as const,
 
+  titleRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    flexWrap: "wrap" as const,
+  } as const,
+
   title: {
     fontSize: "clamp(34px, 7vw, 44px)",
     fontWeight: 800,
     letterSpacing: "-0.03em",
     margin: 0,
+  } as const,
+
+  backLink: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    height: 40,
+    padding: "0 14px",
+    borderRadius: 10,
+    border: "1px solid rgba(107,125,172,0.24)",
+    background: "#131821",
+    color: "#eef2ff",
+    textDecoration: "none",
+    fontWeight: 700,
+    whiteSpace: "nowrap" as const,
   } as const,
 
   grid: {
@@ -583,7 +607,12 @@ export default function AdminPage() {
 
       <main style={styles.page}>
         <div style={styles.wrap}>
-          <h1 style={styles.title}>管理ページ</h1>
+          <div style={styles.titleRow}>
+            <h1 style={styles.title}>管理ページ</h1>
+            <Link href="/" style={styles.backLink}>
+              ← 入力ページへ
+            </Link>
+          </div>
 
           {error ? <div style={styles.error}>{error}</div> : null}
           {!error && message ? <div style={styles.success}>{message}</div> : null}
@@ -783,7 +812,10 @@ export default function AdminPage() {
                 ) : (
                   <div style={styles.cardList}>
                     {fareView.map((fare, idx) => (
-                      <div key={`${fare.from_id}-${fare.to_id}-${idx}`} style={styles.itemCard}>
+                      <div
+                        key={`${fare.from_id}-${fare.to_id}-${idx}`}
+                        style={styles.itemCard}
+                      >
                         <div style={styles.itemMain}>
                           <div style={styles.itemTitle}>
                             {fare.fromName} → {fare.toName}
