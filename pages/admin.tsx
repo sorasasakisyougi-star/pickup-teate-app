@@ -52,12 +52,6 @@ const styles = {
     margin: 0,
   } as const,
 
-  subtitle: {
-    marginTop: 8,
-    color: "#9ea7bd",
-    fontSize: 14,
-  } as const,
-
   grid: {
     display: "grid",
     gridTemplateColumns: "1.1fr 0.9fr",
@@ -250,7 +244,54 @@ const styles = {
     color: "#98a3bb",
     fontSize: 14,
   } as const,
+
+  accordionButton: {
+    width: "100%",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "14px 16px",
+    borderRadius: 14,
+    border: "1px solid rgba(107,125,172,0.18)",
+    background: "#0a0d14",
+    color: "#f5f7ff",
+    cursor: "pointer",
+    fontWeight: 800,
+    fontSize: 16,
+    textAlign: "left" as const,
+  } as const,
+
+  accordionBody: {
+    marginTop: 12,
+  } as const,
 };
+
+function Accordion({
+  title,
+  count,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  count: number;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <button type="button" style={styles.accordionButton} onClick={onToggle}>
+        <span>
+          {title} <span style={{ ...styles.muted, marginLeft: 8 }}>{count}件</span>
+        </span>
+        <span>{open ? "▲" : "▼"}</span>
+      </button>
+
+      {open ? <div style={styles.accordionBody}>{children}</div> : null}
+    </div>
+  );
+}
 
 export default function AdminPage() {
   const [adminKey, setAdminKey] = useState("");
@@ -269,6 +310,10 @@ export default function AdminPage() {
   const [fareFromId, setFareFromId] = useState<string>("");
   const [fareToId, setFareToId] = useState<string>("");
   const [fareAmount, setFareAmount] = useState<string>("");
+
+  const [openDrivers, setOpenDrivers] = useState(false);
+  const [openLocations, setOpenLocations] = useState(false);
+  const [openFares, setOpenFares] = useState(false);
 
   const canSaveFare = useMemo(() => {
     return !!fareFromId && !!fareToId && fareAmount.trim() !== "";
@@ -371,6 +416,7 @@ export default function AdminPage() {
       setDriverName("");
       await reloadAll(false);
       setMessage("運転手を追加しました");
+      setOpenDrivers(true);
     } catch (e) {
       console.error("[addDriver]", e);
       setError(e instanceof Error ? e.message : "運転手追加に失敗");
@@ -426,6 +472,7 @@ export default function AdminPage() {
       setLocationKind("");
       await reloadAll(false);
       setMessage("地点を追加しました");
+      setOpenLocations(true);
     } catch (e) {
       console.error("[addLocation]", e);
       setError(e instanceof Error ? e.message : "地点追加に失敗");
@@ -481,6 +528,7 @@ export default function AdminPage() {
       setFareAmount("");
       await reloadAll(false);
       setMessage("金額を追加 / 更新しました");
+      setOpenFares(true);
     } catch (e) {
       console.error("[saveFare]", e);
       setError(e instanceof Error ? e.message : "金額保存に失敗");
@@ -516,22 +564,11 @@ export default function AdminPage() {
     <main style={styles.page}>
       <div style={styles.wrap}>
         <h1 style={styles.title}>管理ページ</h1>
-        <div style={styles.subtitle}>
-          入力画面と同じ黒系UIで、運転手・地点・区間運賃を管理
-        </div>
 
         {error ? <div style={styles.error}>{error}</div> : null}
         {!error && message ? <div style={styles.success}>{message}</div> : null}
 
-        <div
-          style={{
-            ...styles.grid,
-            gridTemplateColumns:
-              typeof window !== "undefined" && window.innerWidth < 920
-                ? "1fr"
-                : "1.1fr 0.9fr",
-          }}
-        >
+        <div style={styles.grid}>
           <div style={{ display: "grid", gap: 20 }}>
             <section style={styles.section}>
               <h2 style={styles.sectionTitle}>設定</h2>
@@ -558,7 +595,7 @@ export default function AdminPage() {
                 </button>
               </div>
 
-              <div style={{ ...styles.divider }} />
+              <div style={styles.divider} />
 
               <h3 style={styles.subTitle}>運転手を追加</h3>
               <div style={styles.row}>
@@ -573,7 +610,7 @@ export default function AdminPage() {
                 </button>
               </div>
 
-              <div style={{ ...styles.divider }} />
+              <div style={styles.divider} />
 
               <h3 style={styles.subTitle}>地点を追加</h3>
               <div style={styles.row}>
@@ -594,7 +631,7 @@ export default function AdminPage() {
                 </button>
               </div>
 
-              <div style={{ ...styles.divider }} />
+              <div style={styles.divider} />
 
               <h3 style={styles.subTitle}>区間運賃を追加 / 更新</h3>
               <div style={{ display: "grid", gap: 10 }}>
@@ -658,88 +695,103 @@ export default function AdminPage() {
             <section style={styles.section}>
               <h2 style={styles.sectionTitle}>一覧</h2>
 
-              <h3 style={styles.subTitle}>運転手一覧</h3>
-              <div style={styles.muted}>{sortedDrivers.length}件</div>
-              {sortedDrivers.length === 0 ? (
-                <div style={styles.emptyBox}>まだ運転手がありません</div>
-              ) : (
-                <div style={styles.cardList}>
-                  {sortedDrivers.map((d) => (
-                    <div key={d.id} style={styles.itemCard}>
-                      <div style={styles.itemMain}>
-                        <div style={styles.itemTitle}>{d.name}</div>
-                        <div style={styles.badge}>driver #{d.id}</div>
+              <Accordion
+                title="運転手一覧"
+                count={sortedDrivers.length}
+                open={openDrivers}
+                onToggle={() => setOpenDrivers((v) => !v)}
+              >
+                {sortedDrivers.length === 0 ? (
+                  <div style={styles.emptyBox}>まだ運転手がありません</div>
+                ) : (
+                  <div style={styles.cardList}>
+                    {sortedDrivers.map((d) => (
+                      <div key={d.id} style={styles.itemCard}>
+                        <div style={styles.itemMain}>
+                          <div style={styles.itemTitle}>{d.name}</div>
+                          <div style={styles.badge}>driver #{d.id}</div>
+                        </div>
+                        <button
+                          style={styles.buttonDanger}
+                          onClick={() => deleteDriver(d.id)}
+                        >
+                          削除
+                        </button>
                       </div>
-                      <button
-                        style={styles.buttonDanger}
-                        onClick={() => deleteDriver(d.id)}
-                      >
-                        削除
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                )}
+              </Accordion>
 
               <div style={styles.divider} />
 
-              <h3 style={styles.subTitle}>地点一覧</h3>
-              <div style={styles.muted}>{sortedLocations.length}件</div>
-              {sortedLocations.length === 0 ? (
-                <div style={styles.emptyBox}>まだ地点がありません</div>
-              ) : (
-                <div style={styles.cardList}>
-                  {sortedLocations.map((loc) => (
-                    <div key={loc.id} style={styles.itemCard}>
-                      <div style={styles.itemMain}>
-                        <div style={styles.itemTitle}>{loc.name}</div>
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          <div style={styles.badge}>location #{loc.id}</div>
-                          {loc.kind ? <div style={styles.badge}>{loc.kind}</div> : null}
-                        </div>
-                      </div>
-                      <button
-                        style={styles.buttonDanger}
-                        onClick={() => deleteLocation(loc.id)}
-                      >
-                        削除
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div style={styles.divider} />
-
-              <h3 style={styles.subTitle}>金額一覧</h3>
-              <div style={styles.muted}>{fareView.length}件</div>
-              {fareView.length === 0 ? (
-                <div style={styles.emptyBox}>まだ区間運賃がありません</div>
-              ) : (
-                <div style={styles.cardList}>
-                  {fareView.map((fare, idx) => (
-                    <div key={`${fare.from_id}-${fare.to_id}-${idx}`} style={styles.itemCard}>
-                      <div style={styles.itemMain}>
-                        <div style={styles.itemTitle}>
-                          {fare.fromName} → {fare.toName}
-                        </div>
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          <div style={styles.badge}>{fare.amount_yen}円</div>
-                          <div style={styles.badge}>
-                            {fare.from_id} → {fare.to_id}
+              <Accordion
+                title="地点一覧"
+                count={sortedLocations.length}
+                open={openLocations}
+                onToggle={() => setOpenLocations((v) => !v)}
+              >
+                {sortedLocations.length === 0 ? (
+                  <div style={styles.emptyBox}>まだ地点がありません</div>
+                ) : (
+                  <div style={styles.cardList}>
+                    {sortedLocations.map((loc) => (
+                      <div key={loc.id} style={styles.itemCard}>
+                        <div style={styles.itemMain}>
+                          <div style={styles.itemTitle}>{loc.name}</div>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            <div style={styles.badge}>location #{loc.id}</div>
+                            {loc.kind ? <div style={styles.badge}>{loc.kind}</div> : null}
                           </div>
                         </div>
+                        <button
+                          style={styles.buttonDanger}
+                          onClick={() => deleteLocation(loc.id)}
+                        >
+                          削除
+                        </button>
                       </div>
-                      <button
-                        style={styles.buttonDanger}
-                        onClick={() => deleteFare(fare.from_id, fare.to_id)}
-                      >
-                        削除
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                )}
+              </Accordion>
+
+              <div style={styles.divider} />
+
+              <Accordion
+                title="金額一覧"
+                count={fareView.length}
+                open={openFares}
+                onToggle={() => setOpenFares((v) => !v)}
+              >
+                {fareView.length === 0 ? (
+                  <div style={styles.emptyBox}>まだ区間運賃がありません</div>
+                ) : (
+                  <div style={styles.cardList}>
+                    {fareView.map((fare, idx) => (
+                      <div key={`${fare.from_id}-${fare.to_id}-${idx}`} style={styles.itemCard}>
+                        <div style={styles.itemMain}>
+                          <div style={styles.itemTitle}>
+                            {fare.fromName} → {fare.toName}
+                          </div>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            <div style={styles.badge}>{fare.amount_yen}円</div>
+                            <div style={styles.badge}>
+                              {fare.from_id} → {fare.to_id}
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          style={styles.buttonDanger}
+                          onClick={() => deleteFare(fare.from_id, fare.to_id)}
+                        >
+                          削除
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Accordion>
             </section>
           </div>
         </div>
