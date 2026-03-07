@@ -1,288 +1,370 @@
-"use client";
-
 import { useEffect, useMemo, useState } from "react";
 
-type DriverRow = { id: number; name: string; sort_order: number };
-type LocationRow = { id: number; name: string; kind?: string | null };
-type FareRow = { from_id: number; to_id: number; amount_yen: number };
+type DriverRow = {
+  id: number;
+  name: string;
+};
 
-async function call(path: string, method: string, adminKey: string, body?: any) {
-  const res = await fetch(path, {
-    method,
-    headers: { "content-type": "application/json", "x-admin-key": adminKey },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const j = await res.json().catch(() => null);
-  if (!res.ok || !j?.ok) throw new Error(j?.error || `HTTP ${res.status}`);
-  return j;
+type LocationRow = {
+  id: number;
+  name: string;
+  kind?: string | null;
+};
+
+type FareRow = {
+  id?: number;
+  from_id: number;
+  to_id: number;
+  amount_yen: number;
+};
+
+async function readJsonOrThrow(res: Response) {
+  const text = await res.text();
+
+  if (!res.ok) {
+    throw new Error(text || `HTTP ${res.status}`);
+  }
+
+  if (!text) return [];
+  return JSON.parse(text);
 }
 
-export default function Admin() {
+export default function AdminPage() {
   const [adminKey, setAdminKey] = useState("");
-  const [status, setStatus] = useState("");
 
   const [drivers, setDrivers] = useState<DriverRow[]>([]);
   const [locations, setLocations] = useState<LocationRow[]>([]);
   const [fares, setFares] = useState<FareRow[]>([]);
 
-  const [newDriver, setNewDriver] = useState("");
-  const [newLoc, setNewLoc] = useState("");
-  const [newKind, setNewKind] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  const [fromId, setFromId] = useState<number | "">("");
-  const [toId, setToId] = useState<number | "">("");
-  const [yen, setYen] = useState<number | "">("");
+  const [driverName, setDriverName] = useState("");
+  const [locationName, setLocationName] = useState("");
+  const [locationKind, setLocationKind] = useState("");
+  const [fareFromId, setFareFromId] = useState<string>("");
+  const [fareToId, setFareToId] = useState<string>("");
+  const [fareAmount, setFareAmount] = useState<string>("");
 
-  useEffect(() => {
-    setAdminKey(sessionStorage.getItem("ADMIN_KEY_CACHE") || "");
-  }, []);
-  useEffect(() => {
-    sessionStorage.setItem("ADMIN_KEY_CACHE", adminKey);
-  }, [adminKey]);
+  const canSaveFare = useMemo(() => {
+    return !!fareFromId && !!fareToId && fareAmount.trim() !== "";
+  }, [fareFromId, fareToId, fareAmount]);
 
-  const locMap = useMemo(() => new Map(locations.map((l) => [l.id, l.name])), [locations]);
+  async function loadDrivers() {
+    const res = await fetch("/api/admin/drivers");
+    const data = await readJsonOrThrow(res);
+    return Array.isArray(data) ? data : [];
+  }
 
-  async function reload() {
-    setStatus("");
-    const d = await fetch("/api/admin/drivers").then((r) => r.json());
-    const l = await fetch("/api/admin/locations").then((r) => r.json());
-    const f = await fetch("/api/admin/fares").then((r) => r.json());
-    if (!d?.ok) throw new Error(d?.error || "drivers load failed");
-    if (!l?.ok) throw new Error(l?.error || "locations load failed");
-    if (!f?.ok) throw new Error(f?.error || "fares load failed");
-    setDrivers(d.data || []);
-    setLocations(l.data || []);
-    setFares(f.data || []);
-    setStatus("読み込みOK");
+  async function loadLocations() {
+    const res = await fetch("/api/admin/locations");
+    const data = await readJsonOrThrow(res);
+    return Array.isArray(data) ? data : [];
+  }
+
+  async function loadFares() {
+    const res = await fetch("/api/admin/fares");
+    const data = await readJsonOrThrow(res);
+    return Array.isArray(data) ? data : [];
+  }
+
+  async function reloadAll() {
+    setLoading(true);
+    setError("");
+
+    try {
+      const [driversData, locationsData, faresData] = await Promise.all([
+        loadDrivers(),
+        loadLocations(),
+        loadFares(),
+      ]);
+
+      setDrivers(driversData);
+      setLocations(locationsData);
+      setFares(faresData);
+      setError("");
+    } catch (e) {
+      console.error("[admin reloadAll]", e);
+      setDrivers([]);
+      setLocations([]);
+      setFares([]);
+      setError(e instanceof Error ? e.message : "load failed");
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
-    reload().catch((e) => setStatus(String(e?.message || e)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    reloadAll();
   }, []);
 
+  async function addDriver() {
+    if (!driverName.trim()) return;
+
+    try {
+      setError("");
+
+      const res = await fetch("/api/admin/drivers", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-key": adminKey,
+        },
+        body: JSON.stringify({ name: driverName.trim() }),
+      });
+
+      await readJsonOrThrow(res);
+      setDriverName("");
+      await reloadAll();
+    } catch (e) {
+      console.error("[addDriver]", e);
+      setError(e instanceof Error ? e.message : "運転手追加に失敗");
+    }
+  }
+
+  async function deleteDriver(id: number) {
+    try {
+      setError("");
+
+      const res = await fetch("/api/admin/drivers", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-key": adminKey,
+        },
+        body: JSON.stringify({ id }),
+      });
+
+      await readJsonOrThrow(res);
+      await reloadAll();
+    } catch (e) {
+      console.error("[deleteDriver]", e);
+      setError(e instanceof Error ? e.message : "運転手削除に失敗");
+    }
+  }
+
+  async function addLocation() {
+    if (!locationName.trim()) return;
+
+    try {
+      setError("");
+
+      const res = await fetch("/api/admin/locations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-key": adminKey,
+        },
+        body: JSON.stringify({
+          name: locationName.trim(),
+          kind: locationKind.trim() || null,
+        }),
+      });
+
+      await readJsonOrThrow(res);
+      setLocationName("");
+      setLocationKind("");
+      await reloadAll();
+    } catch (e) {
+      console.error("[addLocation]", e);
+      setError(e instanceof Error ? e.message : "地点追加に失敗");
+    }
+  }
+
+  async function deleteLocation(id: number) {
+    try {
+      setError("");
+
+      const res = await fetch("/api/admin/locations", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-key": adminKey,
+        },
+        body: JSON.stringify({ id }),
+      });
+
+      await readJsonOrThrow(res);
+      await reloadAll();
+    } catch (e) {
+      console.error("[deleteLocation]", e);
+      setError(e instanceof Error ? e.message : "地点削除に失敗");
+    }
+  }
+
+  async function saveFare() {
+    if (!canSaveFare) return;
+
+    try {
+      setError("");
+
+      const res = await fetch("/api/admin/fares", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-key": adminKey,
+        },
+        body: JSON.stringify({
+          from_id: Number(fareFromId),
+          to_id: Number(fareToId),
+          amount_yen: Number(fareAmount),
+        }),
+      });
+
+      await readJsonOrThrow(res);
+      setFareAmount("");
+      await reloadAll();
+    } catch (e) {
+      console.error("[saveFare]", e);
+      setError(e instanceof Error ? e.message : "金額保存に失敗");
+    }
+  }
+
+  async function deleteFare(from_id: number, to_id: number) {
+    try {
+      setError("");
+
+      const res = await fetch("/api/admin/fares", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-key": adminKey,
+        },
+        body: JSON.stringify({ from_id, to_id }),
+      });
+
+      await readJsonOrThrow(res);
+      await reloadAll();
+    } catch (e) {
+      console.error("[deleteFare]", e);
+      setError(e instanceof Error ? e.message : "金額削除に失敗");
+    }
+  }
+
   return (
-    <main className="min-h-screen bg-black text-white px-4 py-10 flex justify-center">
-      <div className="w-full max-w-5xl space-y-4">
-        <h1 className="text-2xl font-semibold">管理ページ</h1>
+    <main style={{ padding: 24, fontFamily: "sans-serif" }}>
+      <h1 style={{ fontSize: 40, marginBottom: 24 }}>管理ページ</h1>
 
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <div className="text-sm text-white/70 mb-2">ADMIN_KEY</div>
-          <div className="flex gap-2">
-            <input
-              value={adminKey}
-              onChange={(e) => setAdminKey(e.target.value)}
-              className="flex-1 rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"
-              placeholder="VercelのADMIN_KEY"
-            />
-            <button
-              onClick={() => reload().catch((e) => setStatus(String(e?.message || e)))}
-              className="rounded-xl px-4 py-2 text-sm bg-white/10 hover:bg-white/15"
-            >
-              再読み込み
-            </button>
-          </div>
-          {status ? <div className="mt-2 text-sm text-white/70">{status}</div> : null}
-        </div>
-
-        {/* Drivers */}
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <div className="text-lg font-semibold mb-3">運転手</div>
-          <div className="flex gap-2 mb-3">
-            <input
-              value={newDriver}
-              onChange={(e) => setNewDriver(e.target.value)}
-              className="flex-1 rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"
-              placeholder="運転手名"
-            />
-            <button
-              onClick={async () => {
-                try {
-                  await call("/api/admin/drivers", "POST", adminKey, {
-                    name: newDriver,
-                    sort_order: drivers.length,
-                  });
-                  setNewDriver("");
-                  await reload();
-                } catch (e: any) {
-                  setStatus(e?.message || "追加失敗");
-                }
-              }}
-              className="rounded-xl px-4 py-2 text-sm bg-white/10 hover:bg-white/15"
-            >
-              追加
-            </button>
-          </div>
-
-          <div className="space-y-2">
-            {drivers.map((d) => (
-              <div key={d.id} className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/30 p-3">
-                <div className="flex-1">{d.name}</div>
-                <button
-                  onClick={async () => {
-                    if (!confirm(`削除する？ ${d.name}`)) return;
-                    try {
-                      await call("/api/admin/drivers", "DELETE", adminKey, { id: d.id });
-                      await reload();
-                    } catch (e: any) {
-                      setStatus(e?.message || "削除失敗");
-                    }
-                  }}
-                  className="rounded-lg px-3 py-1 text-xs bg-white/10 hover:bg-white/15"
-                >
-                  削除
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Locations */}
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <div className="text-lg font-semibold mb-3">地点</div>
-          <div className="flex gap-2 mb-3">
-            <input
-              value={newLoc}
-              onChange={(e) => setNewLoc(e.target.value)}
-              className="flex-1 rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"
-              placeholder="地点名"
-            />
-            <input
-              value={newKind}
-              onChange={(e) => setNewKind(e.target.value)}
-              className="w-40 rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"
-              placeholder="kind（任意）"
-            />
-            <button
-              onClick={async () => {
-                try {
-                  await call("/api/admin/locations", "POST", adminKey, { name: newLoc, kind: newKind || null });
-                  setNewLoc("");
-                  setNewKind("");
-                  await reload();
-                } catch (e: any) {
-                  setStatus(e?.message || "追加失敗");
-                }
-              }}
-              className="rounded-xl px-4 py-2 text-sm bg-white/10 hover:bg-white/15"
-            >
-              追加
-            </button>
-          </div>
-
-          <div className="space-y-2">
-            {locations.map((l) => (
-              <div key={l.id} className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/30 p-3">
-                <div className="flex-1">
-                  <div>{l.name}</div>
-                  <div className="text-xs text-white/50">kind: {l.kind ?? "-"}</div>
-                </div>
-                <button
-                  onClick={async () => {
-                    if (!confirm(`削除する？ ${l.name}`)) return;
-                    try {
-                      await call("/api/admin/locations", "DELETE", adminKey, { id: l.id });
-                      await reload();
-                    } catch (e: any) {
-                      setStatus(e?.message || "削除失敗");
-                    }
-                  }}
-                  className="rounded-lg px-3 py-1 text-xs bg-white/10 hover:bg-white/15"
-                >
-                  削除
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Fares */}
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <div className="text-lg font-semibold mb-3">金額（区間運賃）</div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 mb-3">
-            <select
-              value={fromId}
-              onChange={(e) => setFromId(e.target.value ? Number(e.target.value) : "")}
-              className="rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"
-            >
-              <option value="">from</option>
-              {locations.map((l) => (
-                <option key={`f-${l.id}`} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
-
-            <select
-              value={toId}
-              onChange={(e) => setToId(e.target.value ? Number(e.target.value) : "")}
-              className="rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"
-            >
-              <option value="">to</option>
-              {locations.map((l) => (
-                <option key={`t-${l.id}`} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
-
-            <input
-              value={yen}
-              onChange={(e) => setYen(e.target.value ? Number(e.target.value) : "")}
-              className="rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"
-              placeholder="円"
-            />
-
-            <button
-              onClick={async () => {
-                try {
-                  if (fromId === "" || toId === "" || yen === "") return;
-                  await call("/api/admin/fares", "POST", adminKey, { from_id: fromId, to_id: toId, amount_yen: yen });
-                  setFromId("");
-                  setToId("");
-                  setYen("");
-                  await reload();
-                } catch (e: any) {
-                  setStatus(e?.message || "保存失敗");
-                }
-              }}
-              className="rounded-xl px-4 py-2 text-sm bg-white/10 hover:bg-white/15"
-            >
-              追加/更新
-            </button>
-          </div>
-
-          <div className="space-y-2">
-            {fares.map((f) => (
-              <div key={`${f.from_id}-${f.to_id}`} className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/30 p-3">
-                <div className="flex-1">
-                  {locMap.get(f.from_id) ?? f.from_id} → {locMap.get(f.to_id) ?? f.to_id}
-                  <div className="text-xs text-white/60">{f.amount_yen.toLocaleString()}円</div>
-                </div>
-                <button
-                  onClick={async () => {
-                    if (!confirm("削除する？")) return;
-                    try {
-                      await call("/api/admin/fares", "DELETE", adminKey, { from_id: f.from_id, to_id: f.to_id });
-                      await reload();
-                    } catch (e: any) {
-                      setStatus(e?.message || "削除失敗");
-                    }
-                  }}
-                  className="rounded-lg px-3 py-1 text-xs bg-white/10 hover:bg-white/15"
-                >
-                  削除
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="text-xs text-white/40">
-          注意：書き込みは ADMIN_KEY が一致した時だけ動く（安全）
-        </div>
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ marginBottom: 8, fontWeight: 700 }}>ADMIN_KEY</div>
+        <input
+          type="password"
+          value={adminKey}
+          onChange={(e) => setAdminKey(e.target.value)}
+          placeholder="VercelのADMIN_KEY"
+          style={{ width: 280, marginRight: 8 }}
+        />
+        <button onClick={reloadAll} disabled={loading}>
+          {loading ? "読込中..." : "再読み込み"}
+        </button>
       </div>
+
+      {error ? (
+        <div style={{ marginBottom: 16, color: "crimson", fontWeight: 700 }}>
+          {error}
+        </div>
+      ) : null}
+
+      <section style={{ marginBottom: 28 }}>
+        <h2>運転手</h2>
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <input
+            value={driverName}
+            onChange={(e) => setDriverName(e.target.value)}
+            placeholder="運転手名"
+          />
+          <button onClick={addDriver}>追加</button>
+        </div>
+
+        <ul>
+          {drivers.map((d) => (
+            <li key={d.id} style={{ marginBottom: 6 }}>
+              {d.name}{" "}
+              <button onClick={() => deleteDriver(d.id)}>削除</button>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section style={{ marginBottom: 28 }}>
+        <h2>地点</h2>
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+          <input
+            value={locationName}
+            onChange={(e) => setLocationName(e.target.value)}
+            placeholder="地点名"
+          />
+          <input
+            value={locationKind}
+            onChange={(e) => setLocationKind(e.target.value)}
+            placeholder="kind（任意）"
+          />
+          <button onClick={addLocation}>追加</button>
+        </div>
+
+        <ul>
+          {locations.map((loc) => (
+            <li key={loc.id} style={{ marginBottom: 6 }}>
+              {loc.name}
+              {loc.kind ? ` / ${loc.kind}` : ""}{" "}
+              <button onClick={() => deleteLocation(loc.id)}>削除</button>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section style={{ marginBottom: 28 }}>
+        <h2>金額（区間運賃）</h2>
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+          <select value={fareFromId} onChange={(e) => setFareFromId(e.target.value)}>
+            <option value="">from</option>
+            {locations.map((loc) => (
+              <option key={loc.id} value={loc.id}>
+                {loc.name}
+              </option>
+            ))}
+          </select>
+
+          <select value={fareToId} onChange={(e) => setFareToId(e.target.value)}>
+            <option value="">to</option>
+            {locations.map((loc) => (
+              <option key={loc.id} value={loc.id}>
+                {loc.name}
+              </option>
+            ))}
+          </select>
+
+          <input
+            value={fareAmount}
+            onChange={(e) => setFareAmount(e.target.value)}
+            placeholder="円"
+            inputMode="numeric"
+          />
+
+          <button onClick={saveFare} disabled={!canSaveFare}>
+            追加/更新
+          </button>
+        </div>
+
+        <ul>
+          {fares.map((fare, idx) => {
+            const from = locations.find((x) => x.id === fare.from_id)?.name ?? fare.from_id;
+            const to = locations.find((x) => x.id === fare.to_id)?.name ?? fare.to_id;
+
+            return (
+              <li key={`${fare.from_id}-${fare.to_id}-${idx}`} style={{ marginBottom: 6 }}>
+                {String(from)} → {String(to)} : {fare.amount_yen}円{" "}
+                <button onClick={() => deleteFare(fare.from_id, fare.to_id)}>削除</button>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+
+      <div>注意：書き込みは ADMIN_KEY が一致した時だけ動く（安全）</div>
     </main>
   );
 }
