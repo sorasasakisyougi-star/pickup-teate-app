@@ -218,10 +218,15 @@ async function fetchFares(): Promise<FareRow[]> {
 
 function getFareAmount(fromId: number | null, toId: number | null, fares: FareRow[]) {
   if (!fromId || !toId) return null;
-  const hit = fares.find((x) => x.from_id === fromId && x.to_id === toId);
-  return hit ? hit.amount_yen : null;
-}
 
+  const direct = fares.find((x) => x.from_id === fromId && x.to_id === toId);
+  if (direct) return direct.amount_yen;
+
+  const reverse = fares.find((x) => x.from_id === toId && x.to_id === fromId);
+  if (reverse) return reverse.amount_yen;
+
+  return null;
+}
 /** OCR保護エリア（触らない） */
 async function cropMeterArea(file: File): Promise<Blob> {
   const img = document.createElement("img");
