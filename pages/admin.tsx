@@ -6,6 +6,11 @@ type DriverRow = {
   name: string;
 };
 
+type VehicleRow = {
+  id: number;
+  name: string;
+};
+
 type LocationRow = {
   id: number;
   name: string;
@@ -329,6 +334,7 @@ export default function AdminPage() {
   const [password, setPassword] = useState("");
 
   const [drivers, setDrivers] = useState<DriverRow[]>([]);
+  const [vehicles, setVehicles] = useState<VehicleRow[]>([]);
   const [locations, setLocations] = useState<LocationRow[]>([]);
   const [fares, setFares] = useState<FareRow[]>([]);
 
@@ -337,12 +343,14 @@ export default function AdminPage() {
   const [message, setMessage] = useState("");
 
   const [driverName, setDriverName] = useState("");
+  const [vehicleName, setVehicleName] = useState("");
   const [locationName, setLocationName] = useState("");
   const [fareFromId, setFareFromId] = useState<string>("");
   const [fareToId, setFareToId] = useState<string>("");
   const [fareAmount, setFareAmount] = useState<string>("");
 
   const [openDrivers, setOpenDrivers] = useState(false);
+  const [openVehicles, setOpenVehicles] = useState(false);
   const [openLocations, setOpenLocations] = useState(false);
   const [openFares, setOpenFares] = useState(false);
 
@@ -353,6 +361,10 @@ export default function AdminPage() {
   const sortedDrivers = useMemo(() => {
     return [...drivers].sort((a, b) => a.name.localeCompare(b.name, "ja"));
   }, [drivers]);
+
+  const sortedVehicles = useMemo(() => {
+    return [...vehicles].sort((a, b) => a.name.localeCompare(b.name, "ja"));
+  }, [vehicles]);
 
   const sortedLocations = useMemo(() => {
     return [...locations].sort((a, b) => a.name.localeCompare(b.name, "ja"));
@@ -380,6 +392,12 @@ export default function AdminPage() {
     return Array.isArray(data) ? data : [];
   }
 
+  async function loadVehicles() {
+    const res = await fetch("/api/admin/vehicles");
+    const data = await readJsonOrThrow(res);
+    return Array.isArray(data) ? data : [];
+  }
+
   async function loadLocations() {
     const res = await fetch("/api/admin/locations");
     const data = await readJsonOrThrow(res);
@@ -398,13 +416,15 @@ export default function AdminPage() {
     if (showMessage) setMessage("");
 
     try {
-      const [driversData, locationsData, faresData] = await Promise.all([
+      const [driversData, vehiclesData, locationsData, faresData] = await Promise.all([
         loadDrivers(),
+        loadVehicles(),
         loadLocations(),
         loadFares(),
       ]);
 
       setDrivers(driversData);
+      setVehicles(vehiclesData);
       setLocations(locationsData);
       setFares(faresData);
 
@@ -414,6 +434,7 @@ export default function AdminPage() {
     } catch (e) {
       console.error("[admin reloadAll]", e);
       setDrivers([]);
+      setVehicles([]);
       setLocations([]);
       setFares([]);
       setError(e instanceof Error ? e.message : "load failed");
@@ -475,6 +496,58 @@ export default function AdminPage() {
     } catch (e) {
       console.error("[deleteDriver]", e);
       setError(e instanceof Error ? e.message : "運転手削除に失敗");
+    }
+  }
+
+  async function addVehicle() {
+    if (!vehicleName.trim()) return;
+
+    try {
+      setError("");
+      setMessage("");
+
+      const res = await fetch("/api/admin/vehicles", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-key": password,
+        },
+        body: JSON.stringify({ name: vehicleName.trim() }),
+      });
+
+      await readJsonOrThrow(res);
+      setVehicleName("");
+      await reloadAll(false);
+      setMessage("車両を追加しました");
+      setOpenVehicles(true);
+    } catch (e) {
+      console.error("[addVehicle]", e);
+      setError(e instanceof Error ? e.message : "車両追加に失敗");
+    }
+  }
+
+  async function deleteVehicle(id: number) {
+    if (!window.confirm("この車両を削除しますか？")) return;
+
+    try {
+      setError("");
+      setMessage("");
+
+      const res = await fetch("/api/admin/vehicles", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-key": password,
+        },
+        body: JSON.stringify({ id }),
+      });
+
+      await readJsonOrThrow(res);
+      await reloadAll(false);
+      setMessage("車両を削除しました");
+    } catch (e) {
+      console.error("[deleteVehicle]", e);
+      setError(e instanceof Error ? e.message : "車両削除に失敗");
     }
   }
 
@@ -663,6 +736,24 @@ export default function AdminPage() {
 
               <div style={styles.divider} />
 
+              <h3 style={styles.subTitle}>車両を追加</h3>
+              <div style={styles.column}>
+                <input
+                  value={vehicleName}
+                  onChange={(e) => setVehicleName(e.target.value)}
+                  placeholder="車両名"
+                  style={styles.input}
+                />
+                <button
+                  style={{ ...styles.buttonPrimary, width: "fit-content" }}
+                  onClick={addVehicle}
+                >
+                  追加
+                </button>
+              </div>
+
+              <div style={styles.divider} />
+
               <h3 style={styles.subTitle}>地点を追加</h3>
               <div style={styles.column}>
                 <input
@@ -755,10 +846,34 @@ export default function AdminPage() {
                           <div style={styles.itemTitle}>{d.name}</div>
                           <div style={styles.badge}>driver #{d.id}</div>
                         </div>
-                        <button
-                          style={styles.buttonDanger}
-                          onClick={() => deleteDriver(d.id)}
-                        >
+                        <button style={styles.buttonDanger} onClick={() => deleteDriver(d.id)}>
+                          削除
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Accordion>
+
+              <div style={styles.divider} />
+
+              <Accordion
+                title="車両一覧"
+                count={sortedVehicles.length}
+                open={openVehicles}
+                onToggle={() => setOpenVehicles((v) => !v)}
+              >
+                {sortedVehicles.length === 0 ? (
+                  <div style={styles.emptyBox}>まだ車両がありません</div>
+                ) : (
+                  <div style={styles.cardList}>
+                    {sortedVehicles.map((v) => (
+                      <div key={v.id} style={styles.itemCard}>
+                        <div style={styles.itemMain}>
+                          <div style={styles.itemTitle}>{v.name}</div>
+                          <div style={styles.badge}>vehicle #{v.id}</div>
+                        </div>
+                        <button style={styles.buttonDanger} onClick={() => deleteVehicle(v.id)}>
                           削除
                         </button>
                       </div>
@@ -787,10 +902,7 @@ export default function AdminPage() {
                             <div style={styles.badge}>location #{loc.id}</div>
                           </div>
                         </div>
-                        <button
-                          style={styles.buttonDanger}
-                          onClick={() => deleteLocation(loc.id)}
-                        >
+                        <button style={styles.buttonDanger} onClick={() => deleteLocation(loc.id)}>
                           削除
                         </button>
                       </div>
@@ -812,10 +924,7 @@ export default function AdminPage() {
                 ) : (
                   <div style={styles.cardList}>
                     {fareView.map((fare, idx) => (
-                      <div
-                        key={`${fare.from_id}-${fare.to_id}-${idx}`}
-                        style={styles.itemCard}
-                      >
+                      <div key={`${fare.from_id}-${fare.to_id}-${idx}`} style={styles.itemCard}>
                         <div style={styles.itemMain}>
                           <div style={styles.itemTitle}>
                             {fare.fromName} → {fare.toName}
