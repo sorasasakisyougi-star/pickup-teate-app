@@ -38,6 +38,7 @@ const styles = {
     fontFamily:
       'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     padding: "20px 14px 56px",
+    boxSizing: "border-box" as const,
   } as const,
 
   wrap: {
@@ -159,6 +160,7 @@ const styles = {
     fontWeight: 700,
     cursor: "pointer",
     whiteSpace: "nowrap" as const,
+    flexShrink: 0 as const,
   } as const,
 
   muted: {
@@ -218,6 +220,7 @@ const styles = {
     fontSize: 15,
     color: "#f5f7ff",
     wordBreak: "break-word" as const,
+    lineHeight: 1.5,
   } as const,
 
   badgeWrap: {
@@ -294,7 +297,8 @@ function Accordion({
     <div>
       <button type="button" style={styles.accordionButton} onClick={onToggle}>
         <span>
-          {title} <span style={{ ...styles.muted, marginLeft: 8 }}>{count}件</span>
+          {title}
+          <span style={{ ...styles.muted, marginLeft: 8 }}>{count}件</span>
         </span>
         <span>{open ? "▲" : "▼"}</span>
       </button>
@@ -571,231 +575,259 @@ export default function AdminPage() {
   }
 
   return (
-    <main style={styles.page}>
-      <div style={styles.wrap}>
-        <h1 style={styles.title}>管理ページ</h1>
+    <>
+      <style jsx global>{`
+        html,
+        body,
+        #__next {
+          margin: 0;
+          padding: 0;
+          min-height: 100%;
+          background: #05070b;
+        }
 
-        {error ? <div style={styles.error}>{error}</div> : null}
-        {!error && message ? <div style={styles.success}>{message}</div> : null}
+        body {
+          overflow-x: hidden;
+        }
+      `}</style>
 
-        <div style={styles.grid}>
-          <section style={styles.section}>
-            <h2 style={styles.sectionTitle}>設定</h2>
+      <main style={styles.page}>
+        <div style={styles.wrap}>
+          <h1 style={styles.title}>管理ページ</h1>
 
-            <label style={styles.label}>パスワード</label>
-            <div style={styles.column}>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Vercel のパスワード"
-                style={styles.input}
-              />
-              <button
-                onClick={() => reloadAll(true)}
-                disabled={loading}
-                style={{
-                  ...styles.buttonGhost,
-                  width: "fit-content",
-                  opacity: loading ? 0.6 : 1,
-                  cursor: loading ? "not-allowed" : "pointer",
-                }}
-              >
-                {loading ? "読込中..." : "再読み込み"}
-              </button>
-            </div>
+          {error ? <div style={styles.error}>{error}</div> : null}
+          {!error && message ? <div style={styles.success}>{message}</div> : null}
 
-            <div style={styles.divider} />
+          <div style={styles.grid}>
+            <section style={styles.section}>
+              <h2 style={styles.sectionTitle}>設定</h2>
 
-            <h3 style={styles.subTitle}>運転手を追加</h3>
-            <div style={styles.column}>
-              <input
-                value={driverName}
-                onChange={(e) => setDriverName(e.target.value)}
-                placeholder="運転手名"
-                style={styles.input}
-              />
-              <button style={{ ...styles.buttonPrimary, width: "fit-content" }} onClick={addDriver}>
-                追加
-              </button>
-            </div>
+              <label style={styles.label}>パスワード</label>
+              <div style={styles.column}>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Vercel のパスワード"
+                  style={styles.input}
+                />
+                <button
+                  onClick={() => reloadAll(true)}
+                  disabled={loading}
+                  style={{
+                    ...styles.buttonGhost,
+                    width: "fit-content",
+                    opacity: loading ? 0.6 : 1,
+                    cursor: loading ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {loading ? "読込中..." : "再読み込み"}
+                </button>
+              </div>
 
-            <div style={styles.divider} />
+              <div style={styles.divider} />
 
-            <h3 style={styles.subTitle}>地点を追加</h3>
-            <div style={styles.column}>
-              <input
-                value={locationName}
-                onChange={(e) => setLocationName(e.target.value)}
-                placeholder="地点名"
-                style={styles.input}
-              />
-              <input
-                value={locationKind}
-                onChange={(e) => setLocationKind(e.target.value)}
-                placeholder="kind（任意）"
-                style={styles.input}
-              />
-              <button style={{ ...styles.buttonPrimary, width: "fit-content" }} onClick={addLocation}>
-                追加
-              </button>
-            </div>
+              <h3 style={styles.subTitle}>運転手を追加</h3>
+              <div style={styles.column}>
+                <input
+                  value={driverName}
+                  onChange={(e) => setDriverName(e.target.value)}
+                  placeholder="運転手名"
+                  style={styles.input}
+                />
+                <button
+                  style={{ ...styles.buttonPrimary, width: "fit-content" }}
+                  onClick={addDriver}
+                >
+                  追加
+                </button>
+              </div>
 
-            <div style={styles.divider} />
+              <div style={styles.divider} />
 
-            <h3 style={styles.subTitle}>区間運賃を追加 / 更新</h3>
-            <div style={styles.column}>
-              <select
-                value={fareFromId}
-                onChange={(e) => setFareFromId(e.target.value)}
-                style={styles.select}
-              >
-                <option value="">出発地を選択</option>
-                {sortedLocations.map((loc) => (
-                  <option key={loc.id} value={loc.id}>
-                    {loc.name}
-                  </option>
-                ))}
-              </select>
+              <h3 style={styles.subTitle}>地点を追加</h3>
+              <div style={styles.column}>
+                <input
+                  value={locationName}
+                  onChange={(e) => setLocationName(e.target.value)}
+                  placeholder="地点名"
+                  style={styles.input}
+                />
+                <input
+                  value={locationKind}
+                  onChange={(e) => setLocationKind(e.target.value)}
+                  placeholder="kind（任意）"
+                  style={styles.input}
+                />
+                <button
+                  style={{ ...styles.buttonPrimary, width: "fit-content" }}
+                  onClick={addLocation}
+                >
+                  追加
+                </button>
+              </div>
 
-              <select
-                value={fareToId}
-                onChange={(e) => setFareToId(e.target.value)}
-                style={styles.select}
-              >
-                <option value="">到着地を選択</option>
-                {sortedLocations.map((loc) => (
-                  <option key={loc.id} value={loc.id}>
-                    {loc.name}
-                  </option>
-                ))}
-              </select>
+              <div style={styles.divider} />
 
-              <input
-                value={fareAmount}
-                onChange={(e) => setFareAmount(e.target.value)}
-                placeholder="金額（円）"
-                inputMode="numeric"
-                style={styles.input}
-              />
-
-              <button
-                style={{
-                  ...styles.buttonPrimary,
-                  width: "fit-content",
-                  opacity: canSaveFare ? 1 : 0.55,
-                  cursor: canSaveFare ? "pointer" : "not-allowed",
-                }}
-                onClick={saveFare}
-                disabled={!canSaveFare}
-              >
-                追加 / 更新
-              </button>
-            </div>
-
-            <div style={{ marginTop: 14, ...styles.muted }}>
-              書き込み系はパスワードが一致した時だけ動く
-            </div>
-
-            <div style={styles.divider} />
-
-            <h2 style={styles.sectionTitle}>一覧</h2>
-
-            <Accordion
-              title="運転手一覧"
-              count={sortedDrivers.length}
-              open={openDrivers}
-              onToggle={() => setOpenDrivers((v) => !v)}
-            >
-              {sortedDrivers.length === 0 ? (
-                <div style={styles.emptyBox}>まだ運転手がありません</div>
-              ) : (
-                <div style={styles.cardList}>
-                  {sortedDrivers.map((d) => (
-                    <div key={d.id} style={styles.itemCard}>
-                      <div style={styles.itemMain}>
-                        <div style={styles.itemTitle}>{d.name}</div>
-                        <div style={styles.badge}>driver #{d.id}</div>
-                      </div>
-                      <button style={styles.buttonDanger} onClick={() => deleteDriver(d.id)}>
-                        削除
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-            </Accordion>
-
-            <div style={styles.divider} />
-
-            <Accordion
-              title="地点一覧"
-              count={sortedLocations.length}
-              open={openLocations}
-              onToggle={() => setOpenLocations((v) => !v)}
-            >
-              {sortedLocations.length === 0 ? (
-                <div style={styles.emptyBox}>まだ地点がありません</div>
-              ) : (
-                <div style={styles.cardList}>
+              <h3 style={styles.subTitle}>区間運賃を追加 / 更新</h3>
+              <div style={styles.column}>
+                <select
+                  value={fareFromId}
+                  onChange={(e) => setFareFromId(e.target.value)}
+                  style={styles.select}
+                >
+                  <option value="">出発地を選択</option>
                   {sortedLocations.map((loc) => (
-                    <div key={loc.id} style={styles.itemCard}>
-                      <div style={styles.itemMain}>
-                        <div style={styles.itemTitle}>{loc.name}</div>
-                        <div style={styles.badgeWrap}>
-                          <div style={styles.badge}>location #{loc.id}</div>
-                          {loc.kind ? <div style={styles.badge}>{loc.kind}</div> : null}
-                        </div>
-                      </div>
-                      <button style={styles.buttonDanger} onClick={() => deleteLocation(loc.id)}>
-                        削除
-                      </button>
-                    </div>
+                    <option key={loc.id} value={loc.id}>
+                      {loc.name}
+                    </option>
                   ))}
-                </div>
-              )}
-            </Accordion>
+                </select>
 
-            <div style={styles.divider} />
+                <select
+                  value={fareToId}
+                  onChange={(e) => setFareToId(e.target.value)}
+                  style={styles.select}
+                >
+                  <option value="">到着地を選択</option>
+                  {sortedLocations.map((loc) => (
+                    <option key={loc.id} value={loc.id}>
+                      {loc.name}
+                    </option>
+                  ))}
+                </select>
 
-            <Accordion
-              title="金額一覧"
-              count={fareView.length}
-              open={openFares}
-              onToggle={() => setOpenFares((v) => !v)}
-            >
-              {fareView.length === 0 ? (
-                <div style={styles.emptyBox}>まだ区間運賃がありません</div>
-              ) : (
-                <div style={styles.cardList}>
-                  {fareView.map((fare, idx) => (
-                    <div key={`${fare.from_id}-${fare.to_id}-${idx}`} style={styles.itemCard}>
-                      <div style={styles.itemMain}>
-                        <div style={styles.itemTitle}>
-                          {fare.fromName} → {fare.toName}
+                <input
+                  value={fareAmount}
+                  onChange={(e) => setFareAmount(e.target.value)}
+                  placeholder="金額（円）"
+                  inputMode="numeric"
+                  style={styles.input}
+                />
+
+                <button
+                  style={{
+                    ...styles.buttonPrimary,
+                    width: "fit-content",
+                    opacity: canSaveFare ? 1 : 0.55,
+                    cursor: canSaveFare ? "pointer" : "not-allowed",
+                  }}
+                  onClick={saveFare}
+                  disabled={!canSaveFare}
+                >
+                  追加 / 更新
+                </button>
+              </div>
+
+              <div style={{ marginTop: 14, ...styles.muted }}>
+                書き込み系はパスワードが一致した時だけ動く
+              </div>
+
+              <div style={styles.divider} />
+
+              <h2 style={styles.sectionTitle}>一覧</h2>
+
+              <Accordion
+                title="運転手一覧"
+                count={sortedDrivers.length}
+                open={openDrivers}
+                onToggle={() => setOpenDrivers((v) => !v)}
+              >
+                {sortedDrivers.length === 0 ? (
+                  <div style={styles.emptyBox}>まだ運転手がありません</div>
+                ) : (
+                  <div style={styles.cardList}>
+                    {sortedDrivers.map((d) => (
+                      <div key={d.id} style={styles.itemCard}>
+                        <div style={styles.itemMain}>
+                          <div style={styles.itemTitle}>{d.name}</div>
+                          <div style={styles.badge}>driver #{d.id}</div>
                         </div>
-                        <div style={styles.badgeWrap}>
-                          <div style={styles.badge}>{fare.amount_yen}円</div>
-                          <div style={styles.badge}>
-                            {fare.from_id} → {fare.to_id}
+                        <button
+                          style={styles.buttonDanger}
+                          onClick={() => deleteDriver(d.id)}
+                        >
+                          削除
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Accordion>
+
+              <div style={styles.divider} />
+
+              <Accordion
+                title="地点一覧"
+                count={sortedLocations.length}
+                open={openLocations}
+                onToggle={() => setOpenLocations((v) => !v)}
+              >
+                {sortedLocations.length === 0 ? (
+                  <div style={styles.emptyBox}>まだ地点がありません</div>
+                ) : (
+                  <div style={styles.cardList}>
+                    {sortedLocations.map((loc) => (
+                      <div key={loc.id} style={styles.itemCard}>
+                        <div style={styles.itemMain}>
+                          <div style={styles.itemTitle}>{loc.name}</div>
+                          <div style={styles.badgeWrap}>
+                            <div style={styles.badge}>location #{loc.id}</div>
+                            {loc.kind ? <div style={styles.badge}>{loc.kind}</div> : null}
                           </div>
                         </div>
+                        <button
+                          style={styles.buttonDanger}
+                          onClick={() => deleteLocation(loc.id)}
+                        >
+                          削除
+                        </button>
                       </div>
-                      <button
-                        style={styles.buttonDanger}
-                        onClick={() => deleteFare(fare.from_id, fare.to_id)}
-                      >
-                        削除
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Accordion>
-          </section>
+                    ))}
+                  </div>
+                )}
+              </Accordion>
+
+              <div style={styles.divider} />
+
+              <Accordion
+                title="金額一覧"
+                count={fareView.length}
+                open={openFares}
+                onToggle={() => setOpenFares((v) => !v)}
+              >
+                {fareView.length === 0 ? (
+                  <div style={styles.emptyBox}>まだ区間運賃がありません</div>
+                ) : (
+                  <div style={styles.cardList}>
+                    {fareView.map((fare, idx) => (
+                      <div key={`${fare.from_id}-${fare.to_id}-${idx}`} style={styles.itemCard}>
+                        <div style={styles.itemMain}>
+                          <div style={styles.itemTitle}>
+                            {fare.fromName} → {fare.toName}
+                          </div>
+                          <div style={styles.badgeWrap}>
+                            <div style={styles.badge}>{fare.amount_yen}円</div>
+                            <div style={styles.badge}>
+                              {fare.from_id} → {fare.to_id}
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          style={styles.buttonDanger}
+                          onClick={() => deleteFare(fare.from_id, fare.to_id)}
+                        >
+                          削除
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Accordion>
+            </section>
+          </div>
         </div>
-      </div>
-    </main>
+      </main>
+    </>
   );
 }
