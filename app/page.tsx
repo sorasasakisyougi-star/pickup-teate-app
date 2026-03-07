@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 /** ========= types ========= */
+type DriverRow = { id: number; name: string };
 type LocationRow = { id: number; name: string; kind?: string | null };
 type FareRow = { from_id: number; to_id: number; amount_yen: number };
 type Mode = "route" | "bus";
@@ -86,33 +88,6 @@ type GoogleOcrResponse = {
 };
 
 /** ========= constants ========= */
-const DEFAULT_DRIVER_NAMES = [
-  "拓哉",
-  "ロヒップ",
-  "カビブ",
-  "ナルディ",
-  "フェブリ",
-  "アジ",
-  "ダニ",
-  "ハン",
-  "アンガ",
-  "コウォ",
-  "ワヒュ",
-  "ソレ",
-  "照太",
-  "エルヴァンド",
-  "ヨガ",
-  "ヘンキ",
-  "ラフリ",
-  "大空",
-  "優稀",
-  "ワルヨ",
-  "アンディ",
-  "ディカ",
-  "ディッキー",
-] as const;
-
-const DRIVER_STORAGE_KEY = "pickup_driver_names_v1";
 const BUCKET = "order-photos";
 const DIFF_LIMIT_KM = 100;
 const MAX_ARRIVALS = 8;
@@ -173,10 +148,6 @@ function sumSegs(values: Array<number | "">): number | "" {
   return nums.reduce((a, b) => a + b, 0);
 }
 
-function uniqStrings(arr: string[]) {
-  return [...new Set(arr.map((s) => s.trim()).filter(Boolean))];
-}
-
 function emptyArrival(): ArrivalInput {
   return {
     locationId: null,
@@ -188,11 +159,6 @@ function emptyArrival(): ArrivalInput {
   };
 }
 
-/**
- * ODO候補の選び方（誤爆対策）
- * - まず 5〜7桁だけ採用（ODO想定）
- * - それが無ければ全体から「6桁優先」で採用
- */
 function pickBestCandidateFromList(cands: string[]) {
   const clean = (cands ?? [])
     .map((s) => String(s).replace(/[^\d]/g, ""))
@@ -217,6 +183,41 @@ function pickBestCandidateFromList(cands: string[]) {
   };
 
   return pool.sort((a, b) => score(b) - score(a))[0];
+}
+
+async function readJsonOrThrow(res: Response) {
+  const text = await res.text();
+
+  if (!res.ok) {
+    throw new Error(text || `HTTP ${res.status}`);
+  }
+
+  if (!text) return [];
+  return JSON.parse(text);
+}
+
+async function fetchDrivers(): Promise<DriverRow[]> {
+  const res = await fetch("/api/admin/drivers", { cache: "no-store" });
+  const data = await readJsonOrThrow(res);
+  return Array.isArray(data) ? data : [];
+}
+
+async function fetchLocations(): Promise<LocationRow[]> {
+  const res = await fetch("/api/admin/locations", { cache: "no-store" });
+  const data = await readJsonOrThrow(res);
+  return Array.isArray(data) ? data : [];
+}
+
+async function fetchFares(): Promise<FareRow[]> {
+  const res = await fetch("/api/admin/fares", { cache: "no-store" });
+  const data = await readJsonOrThrow(res);
+  return Array.isArray(data) ? data : [];
+}
+
+function getFareAmount(fromId: number | null, toId: number | null, fares: FareRow[]) {
+  if (!fromId || !toId) return null;
+  const hit = fares.find((x) => x.from_id === fromId && x.to_id === toId);
+  return hit ? hit.amount_yen : null;
 }
 
 /** OCR保護エリア（触らない） */
@@ -283,16 +284,14 @@ async function callGoogleOcr(imageFile: File): Promise<GoogleOcrResponse> {
 export default function Page() {
   const [mode, setMode] = useState<Mode>("route");
 
-  // master
+  // masters from admin
+  const [drivers, setDrivers] = useState<DriverRow[]>([]);
   const [locations, setLocations] = useState<LocationRow[]>([]);
   const [fares, setFares] = useState<FareRow[]>([]);
   const [loadErr, setLoadErr] = useState("");
 
   // driver
-  const [driverNames, setDriverNames] = useState<string[]>([]);
   const [driverName, setDriverName] = useState<string>("");
-  const [newDriverName, setNewDriverName] = useState("");
-  const [showDriverManager, setShowDriverManager] = useState(false);
 
   // route
   const [fromId, setFromId] = useState<number | null>(null);
@@ -307,10 +306,10 @@ export default function Page() {
   const [departPreview, setDepartPreview] = useState<string | null>(null);
 
   // ui
-  const [note, setNote] = useState("");
   const [status, setStatus] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [ocrBusyKey, setOcrBusyKey] = useState<string | null>(null);
+  const [note, setNote] = useState("");
 
   // time
   const [now, setNow] = useState<Date>(() => new Date());
@@ -324,112 +323,85 @@ export default function Page() {
     return () => clearInterval(t);
   }, []);
 
-  /** ========= driver localStorage ========= */
-  useEffect(() => {
+  /** ========= masters load from admin ========= */
+  const reloadMasters = useCallback(async () => {
     try {
-      const raw = localStorage.getItem(DRIVER_STORAGE_KEY);
-      if (!raw) {
-        const initial = [...DEFAULT_DRIVER_NAMES];
-        setDriverNames(initial);
-        setDriverName(initial[0] ?? "");
-        return;
-      }
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) throw new Error("invalid");
-      const clean = uniqStrings(parsed.map(String));
-      const merged = clean.length ? clean : [...DEFAULT_DRIVER_NAMES];
-      setDriverNames(merged);
-      setDriverName((prev) => (prev && merged.includes(prev) ? prev : merged[0] ?? ""));
-    } catch {
-      const fallback = [...DEFAULT_DRIVER_NAMES];
-      setDriverNames(fallback);
-      setDriverName(fallback[0] ?? "");
+      setLoadErr("");
+
+      const [driversData, locationsData, faresData] = await Promise.all([
+        fetchDrivers(),
+        fetchLocations(),
+        fetchFares(),
+      ]);
+
+      const sortedDrivers = [...driversData].sort((a, b) =>
+        a.name.localeCompare(b.name, "ja")
+      );
+      const sortedLocations = [...locationsData].sort((a, b) =>
+        a.name.localeCompare(b.name, "ja")
+      );
+
+      setDrivers(sortedDrivers);
+      setLocations(sortedLocations);
+      setFares(faresData);
+
+      setDriverName((prev) => {
+        if (prev && sortedDrivers.some((d) => d.name === prev)) return prev;
+        return sortedDrivers[0]?.name ?? "";
+      });
+
+      setFromId((prev) => {
+        if (prev == null) return prev;
+        return sortedLocations.some((l) => l.id === prev) ? prev : null;
+      });
+
+      setArrivals((prev) =>
+        prev.map((a) => ({
+          ...a,
+          locationId:
+            a.locationId != null && sortedLocations.some((l) => l.id === a.locationId)
+              ? a.locationId
+              : null,
+        }))
+      );
+    } catch (e) {
+      console.error("[reloadMasters]", e);
+      setLoadErr(e instanceof Error ? e.message : "マスタ読込失敗");
+      setDrivers([]);
+      setLocations([]);
+      setFares([]);
     }
   }, []);
 
   useEffect(() => {
-    if (!driverNames.length) return;
-    try {
-      localStorage.setItem(DRIVER_STORAGE_KEY, JSON.stringify(driverNames));
-    } catch {
-      // ignore
-    }
-  }, [driverNames]);
+    reloadMasters();
+  }, [reloadMasters]);
 
-  function addDriver() {
-    const name = newDriverName.trim();
-    if (!name) return;
-    setDriverNames((prev) => uniqStrings([...prev, name]));
-    setDriverName(name);
-    setNewDriverName("");
-    setShowDriverManager(false);
-  }
-
-  function removeDriver(name: string) {
-    const ok = window.confirm(`「${name}」を削除する？`);
-    if (!ok) return;
-
-    setDriverNames((prev) => {
-      const next = prev.filter((x) => x !== name);
-      return next.length ? next : [...DEFAULT_DRIVER_NAMES];
-    });
-
-    setDriverName((prev) => (prev === name ? "" : prev));
-  }
-
-  /** ========= masters load ========= */
   useEffect(() => {
-    let cancelled = false;
+    const handleFocus = () => {
+      reloadMasters();
+    };
 
-    (async () => {
-      setLoadErr("");
-      try {
-        const locRes = await supabase
-          .from("locations")
-          .select("id,name,kind")
-          .order("name", { ascending: true });
+    const handlePageShow = () => {
+      reloadMasters();
+    };
 
-        if (locRes.error) {
-          if (!cancelled) {
-            setLocations([]);
-            setLoadErr("locations取得に失敗（RLS/権限/テーブル名を確認）");
-            console.error("[locations fetch]", locRes.error);
-          }
-        } else if (!cancelled) {
-          setLocations((locRes.data ?? []) as LocationRow[]);
-        }
-
-        const fareRes = await supabase
-          .from("route_fares")
-          .select("from_id,to_id,amount_yen");
-
-        if (fareRes.error) {
-          if (!cancelled) {
-            setFares([]);
-            setLoadErr((prev) =>
-              prev
-                ? prev + " / fares取得に失敗（RLS/権限/テーブル名）"
-                : "fares取得に失敗（RLS/権限/テーブル名を確認）"
-            );
-            console.error("[fares fetch]", fareRes.error);
-          }
-        } else if (!cancelled) {
-          setFares((fareRes.data ?? []) as FareRow[]);
-        }
-      } catch (e) {
-        if (!cancelled) {
-          setLocations([]);
-          setFares([]);
-          setLoadErr("データ取得で例外が発生（console参照）");
-          console.error(e);
-        }
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        reloadMasters();
       }
-    })();
+    };
+
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener("pageshow", handlePageShow);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
-      cancelled = true;
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("pageshow", handlePageShow);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, []);
+  }, [reloadMasters]);
 
   /** ========= lookups ========= */
   const locMap = useMemo(() => {
@@ -452,14 +424,6 @@ export default function Page() {
   }, [fromId, arrivals, arrivalCount, locMap]);
 
   /** ========= fare ========= */
-  function findFare(a: number, b: number): number | null {
-    const direct = fares.find((f) => f.from_id === a && f.to_id === b);
-    if (direct) return direct.amount_yen;
-    const reverse = fares.find((f) => f.from_id === b && f.to_id === a);
-    if (reverse) return reverse.amount_yen;
-    return null;
-  }
-
   const computedAmountYen = useMemo(() => {
     if (mode === "bus") return 2000;
     if (fromId == null) return null;
@@ -471,7 +435,7 @@ export default function Page() {
       const next = arrivals[i].locationId;
       if (next == null) return null;
       if (next === cur) return null;
-      const fare = findFare(cur, next);
+      const fare = getFareAmount(cur, next, fares);
       if (fare == null) return null;
       sum += fare;
       cur = next;
@@ -556,15 +520,11 @@ export default function Page() {
     };
 
     const markDone = () => {
-      if (target === "depart") {
-        // departは photo change で自然に再OCRされるのでフラグ不要
-        return;
-      }
+      if (target === "depart") return;
       updateArrival(target, { ocrDone: true });
     };
 
     try {
-      // 1) 切り抜き
       const croppedBlob = await cropMeterArea(file);
       const croppedFile = new File([croppedBlob], "meter-crop.jpg", { type: "image/jpeg" });
 
@@ -572,7 +532,6 @@ export default function Page() {
       let cands = [r.bestCandidate ?? "", ...(r.candidates ?? [])].filter(Boolean);
       let best = pickBestCandidateFromList(cands);
 
-      // 2) ダメなら元画像で再試行
       if (!best) {
         r = await callGoogleOcr(file);
         cands = [r.bestCandidate ?? "", ...(r.candidates ?? [])].filter(Boolean);
@@ -580,7 +539,6 @@ export default function Page() {
       }
 
       if (!best) {
-        // UIに失敗文言は出さない（手入力で対応）
         markDone();
         return;
       }
@@ -594,7 +552,6 @@ export default function Page() {
       applyOdo(num);
       markDone();
     } catch {
-      // UIにエラー文言は出さない
       markDone();
     } finally {
       setOcrBusyKey(null);
@@ -674,7 +631,7 @@ export default function Page() {
       for (let i = 0; i < arrivalCount; i++) {
         if (arrivals[i].locationId == null) miss.push(`到着${i + 1}（場所）`);
       }
-      if (computedAmountYen == null) miss.push("金額（料金表に無い区間がある/同地点連続）");
+      if (computedAmountYen == null) miss.push("金額");
     }
 
     if (departOdo == null) miss.push("ODO(出発)");
@@ -685,7 +642,7 @@ export default function Page() {
       if (!arrivals[i].photoFile) miss.push(`写真(到着${i + 1})`);
     }
 
-    if (distanceInvalid) miss.push("走行距離（マイナス区間/100km以上）");
+    if (distanceInvalid) miss.push("走行距離");
 
     return miss;
   }, [
@@ -708,7 +665,6 @@ export default function Page() {
     setStatus("");
 
     if (missingLabels.length) {
-      // UIに詳細は出さない。必要なら alert にしてもいいが、今回は無表示。
       setStatus("備考以外に未入力があるため保存できません");
       return;
     }
@@ -721,7 +677,6 @@ export default function Page() {
       const reportAtExcel = formatDateTimeForExcel(nowAtSave);
       const amountToSave = mode === "bus" ? 2000 : (computedAmountYen as number);
 
-      // 出発写真アップロード
       let depart_photo_path: string | null = null;
       let depart_photo_url: string | null = null;
       if (departPhoto) {
@@ -730,7 +685,6 @@ export default function Page() {
         depart_photo_url = r.url;
       }
 
-      // 到着1〜8写真アップロード
       const arrivalPhotoUrls: string[] = Array(MAX_ARRIVALS).fill("");
       let lastArrivalPhotoPath: string | null = null;
       let lastArrivalPhotoUrl: string | null = null;
@@ -746,7 +700,6 @@ export default function Page() {
         }
       }
 
-      // DB保存（既存スキーマ互換：最終到着を到着地として入れる）
       const finalArrival = arrivals[arrivalCount - 1];
       const payloadDb: PickupOrderInsert = {
         driver_name: driverName,
@@ -827,7 +780,6 @@ export default function Page() {
         setStatus("保存しました（Power Automate送信は失敗）");
       }
 
-      // reset
       setFromId(null);
       setArrivalCount(1);
       setArrivals(Array.from({ length: MAX_ARRIVALS }, () => emptyArrival()));
@@ -844,10 +796,21 @@ export default function Page() {
   return (
     <main className="min-h-screen bg-black text-white flex items-start justify-center px-4 py-8">
       <div className="w-full max-w-4xl">
-        <h1 className="text-center text-3xl font-semibold mb-1">ピックアップ手当</h1>
-        <p className="text-center text-sm text-white/60 mb-6">
-          通常ルートは料金表参照 / バスは一律2,000円
-        </p>
+        <div className="mb-6 flex items-start justify-between gap-3 flex-wrap">
+          <div className="flex-1 min-w-[220px]">
+            <h1 className="text-center text-3xl font-semibold mb-1">ピックアップ手当</h1>
+            <p className="text-center text-sm text-white/60">
+              通常ルートは料金表参照 / バスは一律2,000円
+            </p>
+          </div>
+
+          <Link
+            href="/admin"
+            className="inline-flex items-center justify-center rounded-lg px-3 py-2 text-sm bg-white/10 hover:bg-white/15 transition"
+          >
+            管理ページへ
+          </Link>
+        </div>
 
         <div className="rounded-2xl border border-white/10 bg-white/5 p-4 sm:p-6 shadow-xl">
           {/* 運転者 */}
@@ -861,76 +824,16 @@ export default function Page() {
                 className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"
               >
                 <option value="">選択</option>
-                {driverNames.map((n) => (
-                  <option key={n} value={n}>
-                    {n}
+                {drivers.map((d) => (
+                  <option key={d.id} value={d.name}>
+                    {d.name}
                   </option>
                 ))}
               </select>
 
-              <div className="flex items-center justify-between">
-                <button
-                  type="button"
-                  onClick={() => setShowDriverManager((v) => !v)}
-                  className="rounded-lg px-3 py-2 text-xs bg-white/10 hover:bg-white/15 transition"
-                >
-                  {showDriverManager ? "▼ 運転者管理を閉じる" : "▶ 運転者を追加 / 削除"}
-                </button>
-
-                <span className="text-xs text-white/40">{driverNames.length}人</span>
+              <div className="flex items-center justify-end">
+                <span className="text-xs text-white/40">{drivers.length}人</span>
               </div>
-
-              {showDriverManager && (
-                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                  <div className="mb-2 text-xs text-white/60">
-                    運転者を追加 / 削除（この端末に保存）
-                  </div>
-
-                  <div className="flex gap-2">
-                    <input
-                      value={newDriverName}
-                      onChange={(e) => setNewDriverName(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          addDriver();
-                        }
-                      }}
-                      placeholder="新しい運転者名"
-                      className="flex-1 rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm"
-                    />
-                    <button
-                      type="button"
-                      onClick={addDriver}
-                      className="rounded-lg px-3 py-2 text-sm bg-white/10 hover:bg-white/15"
-                    >
-                      追加
-                    </button>
-                  </div>
-
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {driverNames.map((n) => (
-                      <button
-                        key={`chip-${n}`}
-                        type="button"
-                        onClick={() => removeDriver(n)}
-                        className={`rounded-full border px-3 py-1 text-xs transition ${
-                          driverName === n
-                            ? "border-blue-400/40 bg-blue-900/40 text-white"
-                            : "border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
-                        }`}
-                        title={`削除: ${n}`}
-                      >
-                        {n} <span className="ml-1 text-white/50">×</span>
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="mt-2 text-[11px] text-white/35">
-                    ※ タップで削除（確認ダイアログあり）
-                  </div>
-                </div>
-              )}
             </div>
           </div>
 
@@ -1072,7 +975,10 @@ export default function Page() {
                 typeof segmentDistances[idx] === "number" ? `${segmentDistances[idx]} km` : "—";
 
               return (
-                <div key={`arrival-${idx}`} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                <div
+                  key={`arrival-${idx}`}
+                  className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                >
                   <div className="mb-3 text-base font-semibold">到着{idx + 1}</div>
 
                   <div className="grid grid-cols-[78px_1fr] sm:grid-cols-[90px_1fr] items-start gap-3">
@@ -1195,7 +1101,9 @@ export default function Page() {
           </div>
 
           {loadErr ? <div className="text-xs text-white/60 mt-4">{loadErr}</div> : null}
-          {status ? <div className="text-sm text-white/70 mt-4 whitespace-pre-wrap">{status}</div> : null}
+          {status ? (
+            <div className="text-sm text-white/70 mt-4 whitespace-pre-wrap">{status}</div>
+          ) : null}
 
           <button
             type="button"
