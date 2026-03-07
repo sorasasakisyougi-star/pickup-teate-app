@@ -37,7 +37,7 @@ const styles = {
     color: "#f3f6ff",
     fontFamily:
       'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    padding: "32px 20px 64px",
+    padding: "20px 14px 56px",
   } as const,
 
   wrap: {
@@ -46,7 +46,7 @@ const styles = {
   } as const,
 
   title: {
-    fontSize: 44,
+    fontSize: "clamp(34px, 7vw, 44px)",
     fontWeight: 800,
     letterSpacing: "-0.03em",
     margin: 0,
@@ -54,16 +54,16 @@ const styles = {
 
   grid: {
     display: "grid",
-    gridTemplateColumns: "1.1fr 0.9fr",
-    gap: 20,
-    marginTop: 28,
+    gridTemplateColumns: "1fr",
+    gap: 18,
+    marginTop: 22,
   } as const,
 
   section: {
     background: "rgba(12,16,24,0.92)",
     border: "1px solid rgba(110,130,190,0.18)",
     borderRadius: 22,
-    padding: 20,
+    padding: 18,
     boxShadow: "0 20px 50px rgba(0,0,0,0.35)",
   } as const,
 
@@ -94,32 +94,39 @@ const styles = {
     alignItems: "center",
   },
 
+  column: {
+    display: "grid",
+    gap: 10,
+  } as const,
+
   input: {
-    height: 44,
+    width: "100%",
+    height: 46,
     borderRadius: 12,
     border: "1px solid rgba(107,125,172,0.28)",
     background: "#090c12",
     color: "#f5f7ff",
     padding: "0 14px",
     outline: "none",
-    minWidth: 180,
     fontSize: 14,
+    boxSizing: "border-box" as const,
   } as const,
 
   select: {
-    height: 44,
+    width: "100%",
+    height: 46,
     borderRadius: 12,
     border: "1px solid rgba(107,125,172,0.28)",
     background: "#090c12",
     color: "#f5f7ff",
     padding: "0 14px",
     outline: "none",
-    minWidth: 180,
     fontSize: 14,
+    boxSizing: "border-box" as const,
   } as const,
 
   buttonPrimary: {
-    height: 44,
+    height: 46,
     borderRadius: 12,
     border: "1px solid rgba(84,114,220,0.5)",
     background: "#19327e",
@@ -127,17 +134,19 @@ const styles = {
     padding: "0 16px",
     fontWeight: 700,
     cursor: "pointer",
+    whiteSpace: "nowrap" as const,
   } as const,
 
   buttonGhost: {
-    height: 36,
+    height: 40,
     borderRadius: 10,
     border: "1px solid rgba(107,125,172,0.24)",
     background: "#131821",
     color: "#eef2ff",
-    padding: "0 12px",
+    padding: "0 14px",
     fontWeight: 700,
     cursor: "pointer",
+    whiteSpace: "nowrap" as const,
   } as const,
 
   buttonDanger: {
@@ -149,6 +158,7 @@ const styles = {
     padding: "0 10px",
     fontWeight: 700,
     cursor: "pointer",
+    whiteSpace: "nowrap" as const,
   } as const,
 
   muted: {
@@ -189,7 +199,7 @@ const styles = {
     justifyContent: "space-between",
     alignItems: "center",
     gap: 12,
-    padding: "14px 14px",
+    padding: "14px",
     borderRadius: 16,
     background: "#0a0d14",
     border: "1px solid rgba(107,125,172,0.15)",
@@ -200,6 +210,7 @@ const styles = {
     flexDirection: "column" as const,
     gap: 4,
     minWidth: 0,
+    flex: 1,
   },
 
   itemTitle: {
@@ -207,6 +218,12 @@ const styles = {
     fontSize: 15,
     color: "#f5f7ff",
     wordBreak: "break-word" as const,
+  } as const,
+
+  badgeWrap: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap" as const,
   } as const,
 
   badge: {
@@ -228,12 +245,6 @@ const styles = {
     background: "rgba(107,125,172,0.14)",
     margin: "18px 0",
   } as const,
-
-  rightColumnSticky: {
-    position: "sticky" as const,
-    top: 20,
-    alignSelf: "start" as const,
-  },
 
   emptyBox: {
     marginTop: 12,
@@ -294,7 +305,7 @@ function Accordion({
 }
 
 export default function AdminPage() {
-  const [adminKey, setAdminKey] = useState("");
+  const [password, setPassword] = useState("");
 
   const [drivers, setDrivers] = useState<DriverRow[]>([]);
   const [locations, setLocations] = useState<LocationRow[]>([]);
@@ -376,7 +387,6 @@ export default function AdminPage() {
       setDrivers(driversData);
       setLocations(locationsData);
       setFares(faresData);
-      setError("");
 
       if (showMessage) {
         setMessage("再読み込みしました");
@@ -407,7 +417,7 @@ export default function AdminPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-admin-key": adminKey,
+          "x-admin-key": password,
         },
         body: JSON.stringify({ name: driverName.trim() }),
       });
@@ -434,7 +444,7 @@ export default function AdminPage() {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json",
-          "x-admin-key": adminKey,
+          "x-admin-key": password,
         },
         body: JSON.stringify({ id }),
       });
@@ -459,7 +469,7 @@ export default function AdminPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-admin-key": adminKey,
+          "x-admin-key": password,
         },
         body: JSON.stringify({
           name: locationName.trim(),
@@ -490,7 +500,7 @@ export default function AdminPage() {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json",
-          "x-admin-key": adminKey,
+          "x-admin-key": password,
         },
         body: JSON.stringify({ id }),
       });
@@ -515,7 +525,7 @@ export default function AdminPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-admin-key": adminKey,
+          "x-admin-key": password,
         },
         body: JSON.stringify({
           from_id: Number(fareFromId),
@@ -546,7 +556,7 @@ export default function AdminPage() {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json",
-          "x-admin-key": adminKey,
+          "x-admin-key": password,
         },
         body: JSON.stringify({ from_id, to_id }),
       });
@@ -569,231 +579,221 @@ export default function AdminPage() {
         {!error && message ? <div style={styles.success}>{message}</div> : null}
 
         <div style={styles.grid}>
-          <div style={{ display: "grid", gap: 20 }}>
-            <section style={styles.section}>
-              <h2 style={styles.sectionTitle}>設定</h2>
+          <section style={styles.section}>
+            <h2 style={styles.sectionTitle}>設定</h2>
 
-              <label style={styles.label}>ADMIN_KEY</label>
-              <div style={styles.row}>
-                <input
-                  type="password"
-                  value={adminKey}
-                  onChange={(e) => setAdminKey(e.target.value)}
-                  placeholder="Vercel の ADMIN_KEY"
-                  style={{ ...styles.input, minWidth: 280, flex: 1 }}
-                />
-                <button
-                  onClick={() => reloadAll(true)}
-                  disabled={loading}
-                  style={{
-                    ...styles.buttonGhost,
-                    opacity: loading ? 0.6 : 1,
-                    cursor: loading ? "not-allowed" : "pointer",
-                  }}
-                >
-                  {loading ? "読込中..." : "再読み込み"}
-                </button>
-              </div>
+            <label style={styles.label}>パスワード</label>
+            <div style={styles.column}>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Vercel のパスワード"
+                style={styles.input}
+              />
+              <button
+                onClick={() => reloadAll(true)}
+                disabled={loading}
+                style={{
+                  ...styles.buttonGhost,
+                  width: "fit-content",
+                  opacity: loading ? 0.6 : 1,
+                  cursor: loading ? "not-allowed" : "pointer",
+                }}
+              >
+                {loading ? "読込中..." : "再読み込み"}
+              </button>
+            </div>
 
-              <div style={styles.divider} />
+            <div style={styles.divider} />
 
-              <h3 style={styles.subTitle}>運転手を追加</h3>
-              <div style={styles.row}>
-                <input
-                  value={driverName}
-                  onChange={(e) => setDriverName(e.target.value)}
-                  placeholder="運転手名"
-                  style={{ ...styles.input, flex: 1 }}
-                />
-                <button style={styles.buttonPrimary} onClick={addDriver}>
-                  追加
-                </button>
-              </div>
+            <h3 style={styles.subTitle}>運転手を追加</h3>
+            <div style={styles.column}>
+              <input
+                value={driverName}
+                onChange={(e) => setDriverName(e.target.value)}
+                placeholder="運転手名"
+                style={styles.input}
+              />
+              <button style={{ ...styles.buttonPrimary, width: "fit-content" }} onClick={addDriver}>
+                追加
+              </button>
+            </div>
 
-              <div style={styles.divider} />
+            <div style={styles.divider} />
 
-              <h3 style={styles.subTitle}>地点を追加</h3>
-              <div style={styles.row}>
-                <input
-                  value={locationName}
-                  onChange={(e) => setLocationName(e.target.value)}
-                  placeholder="地点名"
-                  style={{ ...styles.input, flex: 1 }}
-                />
-                <input
-                  value={locationKind}
-                  onChange={(e) => setLocationKind(e.target.value)}
-                  placeholder="kind（任意）"
-                  style={{ ...styles.input, flex: 1 }}
-                />
-                <button style={styles.buttonPrimary} onClick={addLocation}>
-                  追加
-                </button>
-              </div>
+            <h3 style={styles.subTitle}>地点を追加</h3>
+            <div style={styles.column}>
+              <input
+                value={locationName}
+                onChange={(e) => setLocationName(e.target.value)}
+                placeholder="地点名"
+                style={styles.input}
+              />
+              <input
+                value={locationKind}
+                onChange={(e) => setLocationKind(e.target.value)}
+                placeholder="kind（任意）"
+                style={styles.input}
+              />
+              <button style={{ ...styles.buttonPrimary, width: "fit-content" }} onClick={addLocation}>
+                追加
+              </button>
+            </div>
 
-              <div style={styles.divider} />
+            <div style={styles.divider} />
 
-              <h3 style={styles.subTitle}>区間運賃を追加 / 更新</h3>
-              <div style={{ display: "grid", gap: 10 }}>
-                <div style={styles.row}>
-                  <select
-                    value={fareFromId}
-                    onChange={(e) => setFareFromId(e.target.value)}
-                    style={{ ...styles.select, flex: 1 }}
-                  >
-                    <option value="">出発地を選択</option>
-                    {sortedLocations.map((loc) => (
-                      <option key={loc.id} value={loc.id}>
-                        {loc.name}
-                      </option>
-                    ))}
-                  </select>
+            <h3 style={styles.subTitle}>区間運賃を追加 / 更新</h3>
+            <div style={styles.column}>
+              <select
+                value={fareFromId}
+                onChange={(e) => setFareFromId(e.target.value)}
+                style={styles.select}
+              >
+                <option value="">出発地を選択</option>
+                {sortedLocations.map((loc) => (
+                  <option key={loc.id} value={loc.id}>
+                    {loc.name}
+                  </option>
+                ))}
+              </select>
 
-                  <select
-                    value={fareToId}
-                    onChange={(e) => setFareToId(e.target.value)}
-                    style={{ ...styles.select, flex: 1 }}
-                  >
-                    <option value="">到着地を選択</option>
-                    {sortedLocations.map((loc) => (
-                      <option key={loc.id} value={loc.id}>
-                        {loc.name}
-                      </option>
-                    ))}
-                  </select>
+              <select
+                value={fareToId}
+                onChange={(e) => setFareToId(e.target.value)}
+                style={styles.select}
+              >
+                <option value="">到着地を選択</option>
+                {sortedLocations.map((loc) => (
+                  <option key={loc.id} value={loc.id}>
+                    {loc.name}
+                  </option>
+                ))}
+              </select>
+
+              <input
+                value={fareAmount}
+                onChange={(e) => setFareAmount(e.target.value)}
+                placeholder="金額（円）"
+                inputMode="numeric"
+                style={styles.input}
+              />
+
+              <button
+                style={{
+                  ...styles.buttonPrimary,
+                  width: "fit-content",
+                  opacity: canSaveFare ? 1 : 0.55,
+                  cursor: canSaveFare ? "pointer" : "not-allowed",
+                }}
+                onClick={saveFare}
+                disabled={!canSaveFare}
+              >
+                追加 / 更新
+              </button>
+            </div>
+
+            <div style={{ marginTop: 14, ...styles.muted }}>
+              書き込み系はパスワードが一致した時だけ動く
+            </div>
+
+            <div style={styles.divider} />
+
+            <h2 style={styles.sectionTitle}>一覧</h2>
+
+            <Accordion
+              title="運転手一覧"
+              count={sortedDrivers.length}
+              open={openDrivers}
+              onToggle={() => setOpenDrivers((v) => !v)}
+            >
+              {sortedDrivers.length === 0 ? (
+                <div style={styles.emptyBox}>まだ運転手がありません</div>
+              ) : (
+                <div style={styles.cardList}>
+                  {sortedDrivers.map((d) => (
+                    <div key={d.id} style={styles.itemCard}>
+                      <div style={styles.itemMain}>
+                        <div style={styles.itemTitle}>{d.name}</div>
+                        <div style={styles.badge}>driver #{d.id}</div>
+                      </div>
+                      <button style={styles.buttonDanger} onClick={() => deleteDriver(d.id)}>
+                        削除
+                      </button>
+                    </div>
+                  ))}
                 </div>
+              )}
 
-                <div style={styles.row}>
-                  <input
-                    value={fareAmount}
-                    onChange={(e) => setFareAmount(e.target.value)}
-                    placeholder="金額（円）"
-                    inputMode="numeric"
-                    style={{ ...styles.input, flex: 1 }}
-                  />
-                  <button
-                    style={{
-                      ...styles.buttonPrimary,
-                      opacity: canSaveFare ? 1 : 0.55,
-                      cursor: canSaveFare ? "pointer" : "not-allowed",
-                    }}
-                    onClick={saveFare}
-                    disabled={!canSaveFare}
-                  >
-                    追加 / 更新
-                  </button>
+            </Accordion>
+
+            <div style={styles.divider} />
+
+            <Accordion
+              title="地点一覧"
+              count={sortedLocations.length}
+              open={openLocations}
+              onToggle={() => setOpenLocations((v) => !v)}
+            >
+              {sortedLocations.length === 0 ? (
+                <div style={styles.emptyBox}>まだ地点がありません</div>
+              ) : (
+                <div style={styles.cardList}>
+                  {sortedLocations.map((loc) => (
+                    <div key={loc.id} style={styles.itemCard}>
+                      <div style={styles.itemMain}>
+                        <div style={styles.itemTitle}>{loc.name}</div>
+                        <div style={styles.badgeWrap}>
+                          <div style={styles.badge}>location #{loc.id}</div>
+                          {loc.kind ? <div style={styles.badge}>{loc.kind}</div> : null}
+                        </div>
+                      </div>
+                      <button style={styles.buttonDanger} onClick={() => deleteLocation(loc.id)}>
+                        削除
+                      </button>
+                    </div>
+                  ))}
                 </div>
-              </div>
+              )}
+            </Accordion>
 
-              <div style={{ marginTop: 14, ...styles.muted }}>
-                書き込み系は ADMIN_KEY が一致した時だけ動く
-              </div>
-            </section>
-          </div>
+            <div style={styles.divider} />
 
-          <div style={styles.rightColumnSticky}>
-            <section style={styles.section}>
-              <h2 style={styles.sectionTitle}>一覧</h2>
-
-              <Accordion
-                title="運転手一覧"
-                count={sortedDrivers.length}
-                open={openDrivers}
-                onToggle={() => setOpenDrivers((v) => !v)}
-              >
-                {sortedDrivers.length === 0 ? (
-                  <div style={styles.emptyBox}>まだ運転手がありません</div>
-                ) : (
-                  <div style={styles.cardList}>
-                    {sortedDrivers.map((d) => (
-                      <div key={d.id} style={styles.itemCard}>
-                        <div style={styles.itemMain}>
-                          <div style={styles.itemTitle}>{d.name}</div>
-                          <div style={styles.badge}>driver #{d.id}</div>
+            <Accordion
+              title="金額一覧"
+              count={fareView.length}
+              open={openFares}
+              onToggle={() => setOpenFares((v) => !v)}
+            >
+              {fareView.length === 0 ? (
+                <div style={styles.emptyBox}>まだ区間運賃がありません</div>
+              ) : (
+                <div style={styles.cardList}>
+                  {fareView.map((fare, idx) => (
+                    <div key={`${fare.from_id}-${fare.to_id}-${idx}`} style={styles.itemCard}>
+                      <div style={styles.itemMain}>
+                        <div style={styles.itemTitle}>
+                          {fare.fromName} → {fare.toName}
                         </div>
-                        <button
-                          style={styles.buttonDanger}
-                          onClick={() => deleteDriver(d.id)}
-                        >
-                          削除
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </Accordion>
-
-              <div style={styles.divider} />
-
-              <Accordion
-                title="地点一覧"
-                count={sortedLocations.length}
-                open={openLocations}
-                onToggle={() => setOpenLocations((v) => !v)}
-              >
-                {sortedLocations.length === 0 ? (
-                  <div style={styles.emptyBox}>まだ地点がありません</div>
-                ) : (
-                  <div style={styles.cardList}>
-                    {sortedLocations.map((loc) => (
-                      <div key={loc.id} style={styles.itemCard}>
-                        <div style={styles.itemMain}>
-                          <div style={styles.itemTitle}>{loc.name}</div>
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                            <div style={styles.badge}>location #{loc.id}</div>
-                            {loc.kind ? <div style={styles.badge}>{loc.kind}</div> : null}
+                        <div style={styles.badgeWrap}>
+                          <div style={styles.badge}>{fare.amount_yen}円</div>
+                          <div style={styles.badge}>
+                            {fare.from_id} → {fare.to_id}
                           </div>
                         </div>
-                        <button
-                          style={styles.buttonDanger}
-                          onClick={() => deleteLocation(loc.id)}
-                        >
-                          削除
-                        </button>
                       </div>
-                    ))}
-                  </div>
-                )}
-              </Accordion>
-
-              <div style={styles.divider} />
-
-              <Accordion
-                title="金額一覧"
-                count={fareView.length}
-                open={openFares}
-                onToggle={() => setOpenFares((v) => !v)}
-              >
-                {fareView.length === 0 ? (
-                  <div style={styles.emptyBox}>まだ区間運賃がありません</div>
-                ) : (
-                  <div style={styles.cardList}>
-                    {fareView.map((fare, idx) => (
-                      <div key={`${fare.from_id}-${fare.to_id}-${idx}`} style={styles.itemCard}>
-                        <div style={styles.itemMain}>
-                          <div style={styles.itemTitle}>
-                            {fare.fromName} → {fare.toName}
-                          </div>
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                            <div style={styles.badge}>{fare.amount_yen}円</div>
-                            <div style={styles.badge}>
-                              {fare.from_id} → {fare.to_id}
-                            </div>
-                          </div>
-                        </div>
-                        <button
-                          style={styles.buttonDanger}
-                          onClick={() => deleteFare(fare.from_id, fare.to_id)}
-                        >
-                          削除
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </Accordion>
-            </section>
-          </div>
+                      <button
+                        style={styles.buttonDanger}
+                        onClick={() => deleteFare(fare.from_id, fare.to_id)}
+                      >
+                        削除
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Accordion>
+          </section>
         </div>
       </div>
     </main>
