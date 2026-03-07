@@ -88,13 +88,6 @@ const styles = {
     fontWeight: 700,
   } as const,
 
-  row: {
-    display: "flex",
-    gap: 10,
-    flexWrap: "wrap" as const,
-    alignItems: "center",
-  },
-
   column: {
     display: "grid",
     gap: 10,
@@ -321,7 +314,6 @@ export default function AdminPage() {
 
   const [driverName, setDriverName] = useState("");
   const [locationName, setLocationName] = useState("");
-  const [locationKind, setLocationKind] = useState("");
   const [fareFromId, setFareFromId] = useState<string>("");
   const [fareToId, setFareToId] = useState<string>("");
   const [fareAmount, setFareAmount] = useState<string>("");
@@ -477,13 +469,11 @@ export default function AdminPage() {
         },
         body: JSON.stringify({
           name: locationName.trim(),
-          kind: locationKind.trim() || null,
         }),
       });
 
       await readJsonOrThrow(res);
       setLocationName("");
-      setLocationKind("");
       await reloadAll(false);
       setMessage("地点を追加しました");
       setOpenLocations(true);
@@ -608,7 +598,6 @@ export default function AdminPage() {
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Vercel のパスワード"
                   style={styles.input}
                 />
                 <button
@@ -651,12 +640,6 @@ export default function AdminPage() {
                   value={locationName}
                   onChange={(e) => setLocationName(e.target.value)}
                   placeholder="地点名"
-                  style={styles.input}
-                />
-                <input
-                  value={locationKind}
-                  onChange={(e) => setLocationKind(e.target.value)}
-                  placeholder="kind（任意）"
                   style={styles.input}
                 />
                 <button
@@ -773,7 +756,6 @@ export default function AdminPage() {
                           <div style={styles.itemTitle}>{loc.name}</div>
                           <div style={styles.badgeWrap}>
                             <div style={styles.badge}>location #{loc.id}</div>
-                            {loc.kind ? <div style={styles.badge}>{loc.kind}</div> : null}
                           </div>
                         </div>
                         <button
