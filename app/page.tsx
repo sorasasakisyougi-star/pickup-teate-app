@@ -423,26 +423,27 @@ export default function Page() {
     return names.join("→");
   }, [fromId, arrivals, arrivalCount, locMap]);
 
-  /** ========= fare ========= */
-  const computedAmountYen = useMemo(() => {
-    if (mode === "bus") return 2000;
-    if (fromId == null) return null;
+ /** ========= fare ========= */
+const computedAmountYen = useMemo(() => {
+  if (mode === "bus") return 2000;
+  if (fromId == null) return null;
 
-    let cur = fromId;
-    let sum = 0;
+  let cur = fromId;
+  let sum = 0;
 
-    for (let i = 0; i < arrivalCount; i++) {
-      const next = arrivals[i].locationId;
-      if (next == null) return null;
-      if (next === cur) return null;
-      const fare = getFareAmount(cur, next, fares);
-      if (fare == null) return null;
-      sum += fare;
-      cur = next;
-    }
-    return sum;
-  }, [mode, fromId, arrivals, arrivalCount, fares]);
+  for (let i = 0; i < arrivalCount; i++) {
+    const next = arrivals[i].locationId;
+    if (next == null) return null;
 
+    const fare = getFareAmount(cur, next, fares);
+    if (fare == null) return null;
+
+    sum += fare;
+    cur = next;
+  }
+
+  return sum;
+}, [mode, fromId, arrivals, arrivalCount, fares]);
   /** ========= distances ========= */
   const segmentDistances = useMemo(() => {
     const s1 = calcSeg(departOdo, arrivals[0]?.odo ?? null);
