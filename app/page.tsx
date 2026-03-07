@@ -823,8 +823,9 @@ export default function Page() {
       <div className="w-full max-w-4xl">
         <div className="mb-6 flex items-start justify-between gap-3 flex-wrap">
           <div className="flex-1 min-w-[220px]">
-            <h1 className="text-center text-3xl font-semibold mb-1">ピックアップ手当</h1>
-            <p className="text-center text-sm text-white/60">
+            <h1 className="text-center text-2xl sm:text-3xl font-semibold mb-1 whitespace-nowrap">
+  ピックアップ手当
+</h1>            <p className="text-center text-sm text-white/60">
               通常ルートは料金表参照 / バスは一律2,000円
             </p>
           </div>
