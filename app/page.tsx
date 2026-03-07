@@ -6,12 +6,14 @@ import { supabase } from "@/lib/supabaseClient";
 
 /** ========= types ========= */
 type DriverRow = { id: number; name: string };
+type VehicleRow = { id: number; name: string };
 type LocationRow = { id: number; name: string; kind?: string | null };
 type FareRow = { from_id: number; to_id: number; amount_yen: number };
 type Mode = "route" | "bus";
 
 type PickupOrderInsert = {
   driver_name: string;
+  vehicle_name: string | null;
   is_bus: boolean;
   from_id: number | null;
   to_id: number | null;
@@ -31,14 +33,13 @@ type ArrivalInput = {
   photoFile: File | null;
   photoPreview: string | null;
   photoUploadedUrl: string | null;
-
-  // UIには出さないが、OCRの実行制御に使う
   ocrDone: boolean;
 };
 
 type FlowPayload = {
   日付: string;
   運転者: string;
+  車両: string;
   出発地: string;
 
   到着１: string;
@@ -115,15 +116,10 @@ function formatDateTimeForExcel(date: Date) {
   return `${y}/${m}/${d} ${hh}:${mm}`;
 }
 
-function toHalfWidthDigits(s: string) {
-  return (s ?? "").replace(/[０-９]/g, (ch) =>
-    String.fromCharCode(ch.charCodeAt(0) - 0xfee0)
-  );
-}
-
 function onlyAsciiDigitsFromAnyWidth(s: string) {
-  const half = toHalfWidthDigits(s);
-  return half.replace(/[^\d]/g, "");
+  return (s ?? "")
+    .replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
+    .replace(/[^\d]/g, "");
 }
 
 function asCell(v: unknown): string | number | "" {
@@ -202,6 +198,12 @@ async function fetchDrivers(): Promise<DriverRow[]> {
   return Array.isArray(data) ? data : [];
 }
 
+async function fetchVehicles(): Promise<VehicleRow[]> {
+  const res = await fetch("/api/admin/vehicles", { cache: "no-store" });
+  const data = await readJsonOrThrow(res);
+  return Array.isArray(data) ? data : [];
+}
+
 async function fetchLocations(): Promise<LocationRow[]> {
   const res = await fetch("/api/admin/locations", { cache: "no-store" });
   const data = await readJsonOrThrow(res);
@@ -258,7 +260,6 @@ async function cropMeterArea(file: File): Promise<Blob> {
   return blob;
 }
 
-/** Google OCR呼び出し（FormData: image） */
 async function callGoogleOcr(imageFile: File): Promise<GoogleOcrResponse> {
   const fd = new FormData();
   fd.append("image", imageFile);
@@ -284,14 +285,16 @@ async function callGoogleOcr(imageFile: File): Promise<GoogleOcrResponse> {
 export default function Page() {
   const [mode, setMode] = useState<Mode>("route");
 
-  // masters from admin
+  // masters
   const [drivers, setDrivers] = useState<DriverRow[]>([]);
+  const [vehicles, setVehicles] = useState<VehicleRow[]>([]);
   const [locations, setLocations] = useState<LocationRow[]>([]);
   const [fares, setFares] = useState<FareRow[]>([]);
   const [loadErr, setLoadErr] = useState("");
 
-  // driver
+  // driver / vehicle
   const [driverName, setDriverName] = useState<string>("");
+  const [vehicleName, setVehicleName] = useState<string>("");
 
   // route
   const [fromId, setFromId] = useState<number | null>(null);
@@ -323,13 +326,14 @@ export default function Page() {
     return () => clearInterval(t);
   }, []);
 
-  /** ========= masters load from admin ========= */
+  /** ========= masters load ========= */
   const reloadMasters = useCallback(async () => {
     try {
       setLoadErr("");
 
-      const [driversData, locationsData, faresData] = await Promise.all([
+      const [driversData, vehiclesData, locationsData, faresData] = await Promise.all([
         fetchDrivers(),
+        fetchVehicles(),
         fetchLocations(),
         fetchFares(),
       ]);
@@ -337,17 +341,26 @@ export default function Page() {
       const sortedDrivers = [...driversData].sort((a, b) =>
         a.name.localeCompare(b.name, "ja")
       );
+      const sortedVehicles = [...vehiclesData].sort((a, b) =>
+        a.name.localeCompare(b.name, "ja")
+      );
       const sortedLocations = [...locationsData].sort((a, b) =>
         a.name.localeCompare(b.name, "ja")
       );
 
       setDrivers(sortedDrivers);
+      setVehicles(sortedVehicles);
       setLocations(sortedLocations);
       setFares(faresData);
 
       setDriverName((prev) => {
         if (prev && sortedDrivers.some((d) => d.name === prev)) return prev;
         return sortedDrivers[0]?.name ?? "";
+      });
+
+      setVehicleName((prev) => {
+        if (prev && sortedVehicles.some((v) => v.name === prev)) return prev;
+        return sortedVehicles[0]?.name ?? "";
       });
 
       setFromId((prev) => {
@@ -368,6 +381,7 @@ export default function Page() {
       console.error("[reloadMasters]", e);
       setLoadErr(e instanceof Error ? e.message : "マスタ読込失敗");
       setDrivers([]);
+      setVehicles([]);
       setLocations([]);
       setFares([]);
     }
@@ -423,27 +437,28 @@ export default function Page() {
     return names.join("→");
   }, [fromId, arrivals, arrivalCount, locMap]);
 
- /** ========= fare ========= */
-const computedAmountYen = useMemo(() => {
-  if (mode === "bus") return 2000;
-  if (fromId == null) return null;
+  /** ========= fare ========= */
+  const computedAmountYen = useMemo(() => {
+    if (mode === "bus") return 2000;
+    if (fromId == null) return null;
 
-  let cur = fromId;
-  let sum = 0;
+    let cur = fromId;
+    let sum = 0;
 
-  for (let i = 0; i < arrivalCount; i++) {
-    const next = arrivals[i].locationId;
-    if (next == null) return null;
+    for (let i = 0; i < arrivalCount; i++) {
+      const next = arrivals[i].locationId;
+      if (next == null) return null;
 
-    const fare = getFareAmount(cur, next, fares);
-    if (fare == null) return null;
+      const fare = getFareAmount(cur, next, fares);
+      if (fare == null) return null;
 
-    sum += fare;
-    cur = next;
-  }
+      sum += fare;
+      cur = next;
+    }
 
-  return sum;
-}, [mode, fromId, arrivals, arrivalCount, fares]);
+    return sum;
+  }, [mode, fromId, arrivals, arrivalCount, fares]);
+
   /** ========= distances ========= */
   const segmentDistances = useMemo(() => {
     const s1 = calcSeg(departOdo, arrivals[0]?.odo ?? null);
@@ -505,7 +520,7 @@ const computedAmountYen = useMemo(() => {
     setArrivalCount((c) => Math.max(1, c - 1));
   }
 
-  /** ========= OCR（Google強化：切り抜き→元画像 / UIに文言は出さない） ========= */
+  /** ========= OCR ========= */
   async function runOcrGoogleStrong(file: File, target: "depart" | number) {
     const key = target === "depart" ? "depart" : `arrive-${target}`;
     if (ocrBusyKey) return;
@@ -621,11 +636,12 @@ const computedAmountYen = useMemo(() => {
     }
   }
 
-  /** ========= validation（UIに一覧は出さない） ========= */
+  /** ========= validation ========= */
   const missingLabels = useMemo(() => {
     const miss: string[] = [];
 
     if (!driverName) miss.push("運転者");
+    if (!vehicleName) miss.push("車両");
 
     if (mode === "route") {
       if (fromId == null) miss.push("出発地");
@@ -648,6 +664,7 @@ const computedAmountYen = useMemo(() => {
     return miss;
   }, [
     driverName,
+    vehicleName,
     mode,
     fromId,
     arrivalCount,
@@ -704,6 +721,7 @@ const computedAmountYen = useMemo(() => {
       const finalArrival = arrivals[arrivalCount - 1];
       const payloadDb: PickupOrderInsert = {
         driver_name: driverName,
+        vehicle_name: vehicleName || null,
         is_bus: mode === "bus",
         from_id: mode === "bus" ? null : fromId,
         to_id: mode === "bus" ? null : (finalArrival?.locationId ?? null),
@@ -734,6 +752,7 @@ const computedAmountYen = useMemo(() => {
       const flowPayload: FlowPayload = {
         日付: reportAtExcel,
         運転者: driverName,
+        車両: vehicleName,
         出発地: mode === "bus" ? "" : idToName(fromId),
 
         到着１: (asCell(arrivalNames[0]) as string) || "",
@@ -817,7 +836,6 @@ const computedAmountYen = useMemo(() => {
           {/* 運転者 */}
           <div className="grid grid-cols-[78px_1fr] sm:grid-cols-[90px_1fr] gap-3 items-start mb-4">
             <div className="text-sm text-white/70 mt-2">運転者</div>
-
             <div className="space-y-2">
               <select
                 value={driverName}
@@ -834,6 +852,29 @@ const computedAmountYen = useMemo(() => {
 
               <div className="flex items-center justify-end">
                 <span className="text-xs text-white/40">{drivers.length}人</span>
+              </div>
+            </div>
+          </div>
+
+          {/* 車両 */}
+          <div className="grid grid-cols-[78px_1fr] sm:grid-cols-[90px_1fr] gap-3 items-start mb-4">
+            <div className="text-sm text-white/70 mt-2">車両</div>
+            <div className="space-y-2">
+              <select
+                value={vehicleName}
+                onChange={(e) => setVehicleName(e.target.value)}
+                className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"
+              >
+                <option value="">選択</option>
+                {vehicles.map((v) => (
+                  <option key={v.id} value={v.name}>
+                    {v.name}
+                  </option>
+                ))}
+              </select>
+
+              <div className="flex items-center justify-end">
+                <span className="text-xs text-white/40">{vehicles.length}台</span>
               </div>
             </div>
           </div>
