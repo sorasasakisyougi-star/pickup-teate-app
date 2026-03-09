@@ -769,7 +769,7 @@ export default function Page() {
   }
 
   return (
-    <main className="min-h-screen w-full overflow-x-hidden bg-[radial-gradient(circle_at_top,rgba(24,80,180,0.18),transparent_28%),linear-gradient(180deg,#020817_0%,#030712_100%)] px-3 py-4 text-white sm:px-6 sm:py-8">
+    <main className="min-h-screen w-full overflow-x-hidden bg-[radial-gradient(circle_at_top,rgba(24,80,180,0.18),transparent_28%),linear-gradient(180deg,#020817_0%,#030712_100%)] px-3 pt-8 pb-4 text-white sm:px-6 sm:pt-10 sm:pb-8">
       <div className="mx-auto w-full max-w-4xl">
         <div className="mb-5 flex flex-col gap-3 sm:mb-7 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 flex-1">
