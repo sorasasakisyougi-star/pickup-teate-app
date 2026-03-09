@@ -1,47 +1,14 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { assertAdminKey } from "@/lib/admin/assertAdminKey";
 import { supabaseAdmin } from "@/lib/admin/supabaseAdmin";
+import { assertAdminKey } from "@/lib/admin/assertAdminKey";
 
-type RouteDistanceRow = {
-  id: number;
-  from_location_id: number;
-  to_location_id: number;
-  distance_km: number;
-  created_at?: string;
-  updated_at?: string;
-};
-
-type Data =
-  | { ok: true; items?: any[]; item?: RouteDistanceRow | null }
-  | { ok: false; error: string };
-
-export default async function handler(
-  req: NextApiRequest,
-  res: NextApiResponse<Data>
-) {
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    assertAdminKey(req);
-
     if (req.method === "GET") {
       const { data, error } = await supabaseAdmin
         .from("route_distances")
-        .select(`
-          id,
-          from_location_id,
-          to_location_id,
-          distance_km,
-          created_at,
-          updated_at,
-          from_location:locations!route_distances_from_location_id_fkey (
-            id,
-            name
-          ),
-          to_location:locations!route_distances_to_location_id_fkey (
-            id,
-            name
-          )
-        `)
-        .order("id", { ascending: true });
+        .select("from_location_id,to_location_id,distance_km")
+        .order("from_location_id", { ascending: true });
 
       if (error) {
         return res.status(500).json({ ok: false, error: error.message });
@@ -50,41 +17,24 @@ export default async function handler(
       return res.status(200).json({ ok: true, items: data ?? [] });
     }
 
+    assertAdminKey(req);
+
     if (req.method === "POST") {
-      const { from_location_id, to_location_id, distance_km } = req.body ?? {};
+      const from_location_id = Number(req.body?.from_location_id);
+      const to_location_id = Number(req.body?.to_location_id);
+      const distance_km = Number(req.body?.distance_km);
 
-      if (!from_location_id || !to_location_id) {
-        return res
-          .status(400)
-          .json({ ok: false, error: "出発地と到着地は必須です" });
-      }
-
-      if (Number(from_location_id) === Number(to_location_id)) {
-        return res
-          .status(400)
-          .json({ ok: false, error: "同じ地点同士は登録できません" });
-      }
-
-      const km = Number(distance_km);
-      if (!Number.isFinite(km) || km < 0) {
-        return res
-          .status(400)
-          .json({ ok: false, error: "距離は0以上の数値で入力してください" });
+      if (!from_location_id || !to_location_id || !Number.isFinite(distance_km)) {
+        return res.status(400).json({ ok: false, error: "invalid payload" });
       }
 
       const { data, error } = await supabaseAdmin
         .from("route_distances")
         .upsert(
-          {
-            from_location_id: Number(from_location_id),
-            to_location_id: Number(to_location_id),
-            distance_km: km,
-          },
-          {
-            onConflict: "from_location_id,to_location_id",
-          }
+          { from_location_id, to_location_id, distance_km },
+          { onConflict: "from_location_id,to_location_id" }
         )
-        .select()
+        .select("from_location_id,to_location_id,distance_km")
         .single();
 
       if (error) {
@@ -95,16 +45,18 @@ export default async function handler(
     }
 
     if (req.method === "DELETE") {
-      const { id } = req.body ?? {};
+      const from_location_id = Number(req.body?.from_location_id);
+      const to_location_id = Number(req.body?.to_location_id);
 
-      if (!id) {
-        return res.status(400).json({ ok: false, error: "idが必要です" });
+      if (!from_location_id || !to_location_id) {
+        return res.status(400).json({ ok: false, error: "from_location_id and to_location_id are required" });
       }
 
       const { error } = await supabaseAdmin
         .from("route_distances")
         .delete()
-        .eq("id", Number(id));
+        .eq("from_location_id", from_location_id)
+        .eq("to_location_id", to_location_id);
 
       if (error) {
         return res.status(500).json({ ok: false, error: error.message });
@@ -113,15 +65,12 @@ export default async function handler(
       return res.status(200).json({ ok: true });
     }
 
-    res.setHeader("Allow", "GET,POST,DELETE");
-    return res.status(405).json({ ok: false, error: "Method Not Allowed" });
+    return res.status(405).json({ ok: false, error: "Method not allowed" });
   } catch (e: any) {
-    const message =
-      e?.message === "UNAUTHORIZED"
-        ? "Unauthorized"
-        : e?.message || "Internal Server Error";
-
-    const status = e?.message === "UNAUTHORIZED" ? 401 : 500;
-    return res.status(status).json({ ok: false, error: message });
+    const msg = e?.message ?? "Server error";
+    if (msg === "Unauthorized") {
+      return res.status(401).json({ ok: false, error: "Unauthorized" });
+    }
+    return res.status(500).json({ ok: false, error: msg });
   }
 }
