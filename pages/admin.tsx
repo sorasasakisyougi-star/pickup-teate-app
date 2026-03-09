@@ -70,24 +70,24 @@ function getErrorMessage(error: unknown, fallback: string) {
 }
 
 const styles: Record<string, CSSProperties> = {
-  page: {
-    minHeight: "100vh",
-    width: "100%",
-    overflowX: "hidden",
-    background:
-      "radial-gradient(circle at top, rgba(24,80,180,0.18), transparent 28%), linear-gradient(180deg, #020817 0%, #030712 100%)",
-    color: "#fff",
-    padding: "16px 12px 48px",
-    fontFamily:
-      'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  },
-
+  
+page: {
+  minHeight: "100vh",
+  width: "100%",
+  overflowX: "hidden",
+  background:
+    "radial-gradient(circle at top, rgba(24,80,180,0.18), transparent 28%), linear-gradient(180deg, #020817 0%, #030712 100%)",
+  color: "#fff",
+  padding: "12px 10px 40px",
+  fontFamily:
+    'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+},
   container: {
-    width: "100%",
-    maxWidth: 920,
-    margin: "0 auto",
-  },
-
+  width: "100%",
+  maxWidth: 920,
+  margin: "0 auto",
+  padding: 0,
+},
   topbar: {
     width: "100%",
     display: "flex",
@@ -130,18 +130,17 @@ const styles: Record<string, CSSProperties> = {
   },
 
   card: {
-    width: "100%",
-    maxWidth: "100%",
-    border: "1px solid rgba(255,255,255,0.08)",
-    background: "rgba(2, 6, 23, 0.82)",
-    borderRadius: 24,
-    padding: 16,
-    boxShadow: "0 16px 50px rgba(0,0,0,0.30)",
-    backdropFilter: "blur(12px)",
-    boxSizing: "border-box",
-    overflow: "hidden",
-  },
-
+  width: "100%",
+  maxWidth: "100%",
+  border: "1px solid rgba(255,255,255,0.08)",
+  background: "rgba(2, 6, 23, 0.82)",
+  borderRadius: 24,
+  padding: 16,
+  boxShadow: "0 16px 50px rgba(0,0,0,0.30)",
+  backdropFilter: "blur(12px)",
+  boxSizing: "border-box",
+  overflow: "hidden",
+},
   block: {
     width: "100%",
     display: "grid",
