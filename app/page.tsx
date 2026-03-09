@@ -824,12 +824,12 @@ export default function Page() {
       <div className="mx-auto w-full max-w-4xl">
         <div className="mb-8 flex items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
-<h1 className="break-keep text-center text-5xl font-extrabold tracking-[-0.05em] leading-[1.05] sm:text-6xl">
+<h1 className="break-keep text-center text-[42px] font-extrabold tracking-[-0.05em] leading-[1.08] sm:text-5xl">
   ピックアップ手当
-</h1><p className="mx-auto mt-4 max-w-xl text-center text-lg leading-8 text-white/55 sm:text-2xl">
-              通常ルートは料金表参照 / バスは一律2,000円
-            </p>
-          </div>
+</h1>
+          <p className="mx-auto mt-3 max-w-xl text-center text-base leading-8 text-white/55 sm:text-xl">
+  通常ルートは料金表参照 / バスは一律2,000円
+</p>          </div>
 
           <Link
             href="/admin"
