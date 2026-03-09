@@ -101,6 +101,7 @@ const BUCKET = "order-photos";
 const DIFF_LIMIT_KM = 100;
 const MAX_ARRIVALS = 8;
 const DISTANCE_ALERT_THRESHOLD_KM = 3;
+const MASTER_UPDATED_KEY = "pickup_masters_updated_at";
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
@@ -205,29 +206,16 @@ function normalizeItems<T>(data: any): T[] {
   return [];
 }
 
-async function fetchDrivers(): Promise<DriverRow[]> {
-  const res = await fetch("/api/admin/drivers", { cache: "no-store" });
-  return normalizeItems<DriverRow>(await readJsonOrThrow(res));
-}
-
-async function fetchVehicles(): Promise<VehicleRow[]> {
-  const res = await fetch("/api/admin/vehicles", { cache: "no-store" });
-  return normalizeItems<VehicleRow>(await readJsonOrThrow(res));
-}
-
-async function fetchLocations(): Promise<LocationRow[]> {
-  const res = await fetch("/api/admin/locations", { cache: "no-store" });
-  return normalizeItems<LocationRow>(await readJsonOrThrow(res));
-}
-
-async function fetchFares(): Promise<FareRow[]> {
-  const res = await fetch("/api/admin/fares", { cache: "no-store" });
-  return normalizeItems<FareRow>(await readJsonOrThrow(res));
-}
-
-async function fetchRouteDistances(): Promise<RouteDistanceRow[]> {
-  const res = await fetch("/api/admin/route-distances", { cache: "no-store" });
-  return normalizeItems<RouteDistanceRow>(await readJsonOrThrow(res));
+async function fetchAdminList<T>(path: string): Promise<T[]> {
+  const sep = path.includes("?") ? "&" : "?";
+  const res = await fetch(`${path}${sep}ts=${Date.now()}`, {
+    cache: "no-store",
+    headers: {
+      "cache-control": "no-store, no-cache, max-age=0, must-revalidate",
+      pragma: "no-cache",
+    },
+  });
+  return normalizeItems<T>(await readJsonOrThrow(res));
 }
 
 function getFareAmount(fromId: number | null, toId: number | null, fares: FareRow[]) {
@@ -347,104 +335,144 @@ export default function Page() {
   const [note, setNote] = useState("");
 
   const [now, setNow] = useState<Date>(() => new Date());
+  const [mastersLoading, setMastersLoading] = useState(false);
 
   const departFileRef = useRef<HTMLInputElement | null>(null);
   const arrivalFileRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const lastReloadAtRef = useRef(0);
+  const lastSeenMasterUpdateRef = useRef("");
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 10_000);
     return () => clearInterval(t);
   }, []);
 
-  const reloadMasters = useCallback(async () => {
-    try {
-      setLoadErr("");
+  const reloadMasters = useCallback(
+    async (force = false) => {
+      const nowMs = Date.now();
+      if (!force && mastersLoading) return;
+      if (!force && nowMs - lastReloadAtRef.current < 800) return;
 
-      const [
-        driversData,
-        vehiclesData,
-        locationsData,
-        faresData,
-        routeDistancesData,
-      ] = await Promise.all([
-        fetchDrivers(),
-        fetchVehicles(),
-        fetchLocations(),
-        fetchFares(),
-        fetchRouteDistances(),
-      ]);
+      lastReloadAtRef.current = nowMs;
+      setMastersLoading(true);
 
-      const sortedDrivers = [...driversData].sort((a, b) =>
-        a.name.localeCompare(b.name, "ja")
-      );
-      const sortedVehicles = [...vehiclesData].sort((a, b) =>
-        a.name.localeCompare(b.name, "ja")
-      );
-      const sortedLocations = [...locationsData].sort((a, b) =>
-        a.name.localeCompare(b.name, "ja")
-      );
+      try {
+        setLoadErr("");
 
-      setDrivers(sortedDrivers);
-      setVehicles(sortedVehicles);
-      setLocations(sortedLocations);
-      setFares(faresData);
-      setRouteDistances(routeDistancesData);
+        const [
+          driversData,
+          vehiclesData,
+          locationsData,
+          faresData,
+          routeDistancesData,
+        ] = await Promise.all([
+          fetchAdminList<DriverRow>("/api/admin/drivers"),
+          fetchAdminList<VehicleRow>("/api/admin/vehicles"),
+          fetchAdminList<LocationRow>("/api/admin/locations"),
+          fetchAdminList<FareRow>("/api/admin/fares"),
+          fetchAdminList<RouteDistanceRow>("/api/admin/route-distances"),
+        ]);
 
-      setDriverName((prev) => {
-        if (prev && sortedDrivers.some((d) => d.name === prev)) return prev;
-        return sortedDrivers[0]?.name ?? "";
-      });
+        const sortedDrivers = [...driversData].sort((a, b) =>
+          a.name.localeCompare(b.name, "ja")
+        );
+        const sortedVehicles = [...vehiclesData].sort((a, b) =>
+          a.name.localeCompare(b.name, "ja")
+        );
+        const sortedLocations = [...locationsData].sort((a, b) =>
+          a.name.localeCompare(b.name, "ja")
+        );
 
-      setVehicleName((prev) => {
-        if (prev && sortedVehicles.some((v) => v.name === prev)) return prev;
-        return sortedVehicles[0]?.name ?? "";
-      });
+        setDrivers(sortedDrivers);
+        setVehicles(sortedVehicles);
+        setLocations(sortedLocations);
+        setFares(faresData);
+        setRouteDistances(routeDistancesData);
 
-      setFromId((prev) => {
-        if (prev == null) return prev;
-        return sortedLocations.some((l) => l.id === prev) ? prev : null;
-      });
+        setDriverName((prev) => {
+          if (prev && sortedDrivers.some((d) => d.name === prev)) return prev;
+          return sortedDrivers[0]?.name ?? "";
+        });
 
-      setArrivals((prev) =>
-        prev.map((a) => ({
-          ...a,
-          locationId:
-            a.locationId != null && sortedLocations.some((l) => l.id === a.locationId)
-              ? a.locationId
-              : null,
-        }))
-      );
-    } catch (e) {
-      console.error("[reloadMasters]", e);
-      setLoadErr(e instanceof Error ? e.message : "マスタ読込失敗");
-      setDrivers([]);
-      setVehicles([]);
-      setLocations([]);
-      setFares([]);
-      setRouteDistances([]);
-    }
-  }, []);
+        setVehicleName((prev) => {
+          if (prev && sortedVehicles.some((v) => v.name === prev)) return prev;
+          return sortedVehicles[0]?.name ?? "";
+        });
+
+        setFromId((prev) => {
+          if (prev == null) return null;
+          return sortedLocations.some((l) => l.id === prev) ? prev : null;
+        });
+
+        setArrivals((prev) =>
+          prev.map((a) => ({
+            ...a,
+            locationId:
+              a.locationId != null && sortedLocations.some((l) => l.id === a.locationId)
+                ? a.locationId
+                : null,
+          }))
+        );
+      } catch (e) {
+        console.error("[reloadMasters]", e);
+        setLoadErr(e instanceof Error ? e.message : "マスタ読込失敗");
+      } finally {
+        setMastersLoading(false);
+      }
+    },
+    [mastersLoading]
+  );
 
   useEffect(() => {
-    reloadMasters();
+    reloadMasters(true);
   }, [reloadMasters]);
 
   useEffect(() => {
-    const handleFocus = () => reloadMasters();
-    const handlePageShow = () => reloadMasters();
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") reloadMasters();
+    const onFocus = () => {
+      reloadMasters(true);
     };
 
-    window.addEventListener("focus", handleFocus);
-    window.addEventListener("pageshow", handlePageShow);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
+    const onPageShow = () => {
+      reloadMasters(true);
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        reloadMasters(true);
+      }
+    };
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === MASTER_UPDATED_KEY) {
+        reloadMasters(true);
+      }
+    };
+
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("pageshow", onPageShow);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("storage", onStorage);
 
     return () => {
-      window.removeEventListener("focus", handleFocus);
-      window.removeEventListener("pageshow", handlePageShow);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("pageshow", onPageShow);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("storage", onStorage);
     };
+  }, [reloadMasters]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const updatedAt = localStorage.getItem(MASTER_UPDATED_KEY) || "";
+      if (updatedAt && updatedAt !== lastSeenMasterUpdateRef.current) {
+        lastSeenMasterUpdateRef.current = updatedAt;
+        reloadMasters(true);
+        return;
+      }
+      reloadMasters(false);
+    }, 5000);
+
+    return () => clearInterval(timer);
   }, [reloadMasters]);
 
   const locMap = useMemo(() => {
@@ -579,12 +607,9 @@ export default function Page() {
         continue;
       }
 
-      const label =
-        i === 0 ? "始→到着1" : `到着${i}→到着${i + 1}`;
+      const label = i === 0 ? "始→到着1" : `到着${i}→到着${i + 1}`;
 
-      messages.push(
-        `${label}: 実${actual}km / 想定${expected}km / 超過${over}km`
-      );
+      messages.push(`${label}: 実${actual}km / 想定${expected}km / 超過${over}km`);
     }
 
     return messages.join(" | ");
