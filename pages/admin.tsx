@@ -40,18 +40,6 @@ type RouteDistanceRow = {
   } | null;
 };
 
-type SeedFare = {
-  from: string;
-  to: string;
-  amount_yen: number;
-};
-
-type SeedDistance = {
-  from: string;
-  to: string;
-  distance_km: number;
-};
-
 async function readJsonOrThrow(res: Response) {
   const text = await res.text();
 
@@ -81,135 +69,7 @@ function getErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
-const SEED_LOCATIONS = [
-  "会社",
-  "真狩市街地",
-  "今井",
-  "ニセコ寮",
-  "京極",
-  "ふじ鮨",
-  "ヒルトン",
-  "リッツカールトン",
-  "五色",
-  "エムズ",
-  "倶知安",
-  "喜茂別",
-  "留寿都",
-  "蘭越",
-] as const;
-
-const SEED_FARES: SeedFare[] = [
-  { from: "会社", to: "真狩市街地", amount_yen: 100 },
-  { from: "会社", to: "今井", amount_yen: 200 },
-  { from: "会社", to: "ニセコ寮", amount_yen: 200 },
-  { from: "会社", to: "京極", amount_yen: 300 },
-  { from: "会社", to: "ふじ鮨", amount_yen: 600 },
-  { from: "会社", to: "ヒルトン", amount_yen: 600 },
-  { from: "会社", to: "リッツカールトン", amount_yen: 600 },
-  { from: "会社", to: "五色", amount_yen: 600 },
-  { from: "会社", to: "エムズ", amount_yen: 600 },
-  { from: "会社", to: "倶知安", amount_yen: 600 },
-  { from: "会社", to: "喜茂別", amount_yen: 500 },
-  { from: "会社", to: "留寿都", amount_yen: 300 },
-
-  { from: "真狩市街地", to: "真狩市街地", amount_yen: 100 },
-  { from: "真狩市街地", to: "今井", amount_yen: 200 },
-  { from: "真狩市街地", to: "ニセコ寮", amount_yen: 200 },
-  { from: "真狩市街地", to: "京極", amount_yen: 300 },
-  { from: "真狩市街地", to: "ふじ鮨", amount_yen: 600 },
-  { from: "真狩市街地", to: "ヒルトン", amount_yen: 600 },
-  { from: "真狩市街地", to: "リッツカールトン", amount_yen: 600 },
-  { from: "真狩市街地", to: "五色", amount_yen: 600 },
-  { from: "真狩市街地", to: "エムズ", amount_yen: 600 },
-  { from: "真狩市街地", to: "倶知安", amount_yen: 600 },
-  { from: "真狩市街地", to: "喜茂別", amount_yen: 400 },
-  { from: "真狩市街地", to: "留寿都", amount_yen: 200 },
-
-  { from: "今井", to: "今井", amount_yen: 200 },
-  { from: "今井", to: "ニセコ寮", amount_yen: 300 },
-  { from: "今井", to: "京極", amount_yen: 500 },
-  { from: "今井", to: "ふじ鮨", amount_yen: 600 },
-  { from: "今井", to: "ヒルトン", amount_yen: 600 },
-  { from: "今井", to: "リッツカールトン", amount_yen: 600 },
-  { from: "今井", to: "五色", amount_yen: 600 },
-  { from: "今井", to: "倶知安", amount_yen: 700 },
-  { from: "今井", to: "留寿都", amount_yen: 300 },
-
-  { from: "ニセコ寮", to: "京極", amount_yen: 500 },
-  { from: "ニセコ寮", to: "ふじ鮨", amount_yen: 400 },
-  { from: "ニセコ寮", to: "ヒルトン", amount_yen: 400 },
-  { from: "ニセコ寮", to: "リッツカールトン", amount_yen: 400 },
-  { from: "ニセコ寮", to: "五色", amount_yen: 400 },
-  { from: "ニセコ寮", to: "倶知安", amount_yen: 400 },
-  { from: "ニセコ寮", to: "喜茂別", amount_yen: 600 },
-  { from: "ニセコ寮", to: "留寿都", amount_yen: 400 },
-
-  { from: "京極", to: "京極", amount_yen: 100 },
-  { from: "京極", to: "ふじ鮨", amount_yen: 600 },
-  { from: "京極", to: "ヒルトン", amount_yen: 900 },
-  { from: "京極", to: "リッツカールトン", amount_yen: 900 },
-  { from: "京極", to: "五色", amount_yen: 900 },
-  { from: "京極", to: "倶知安", amount_yen: 600 },
-  { from: "京極", to: "喜茂別", amount_yen: 300 },
-  { from: "京極", to: "留寿都", amount_yen: 400 },
-
-  { from: "倶知安", to: "倶知安", amount_yen: 100 },
-  { from: "倶知安", to: "ふじ鮨", amount_yen: 300 },
-  { from: "倶知安", to: "ヒルトン", amount_yen: 600 },
-  { from: "倶知安", to: "リッツカールトン", amount_yen: 600 },
-  { from: "倶知安", to: "五色", amount_yen: 600 },
-  { from: "倶知安", to: "喜茂別", amount_yen: 800 },
-  { from: "倶知安", to: "留寿都", amount_yen: 1000 },
-
-  { from: "喜茂別", to: "留寿都", amount_yen: 300 },
-  { from: "喜茂別", to: "ふじ鮨", amount_yen: 1000 },
-  { from: "喜茂別", to: "ヒルトン", amount_yen: 1000 },
-  { from: "喜茂別", to: "リッツカールトン", amount_yen: 1000 },
-  { from: "喜茂別", to: "五色", amount_yen: 1000 },
-  { from: "喜茂別", to: "倶知安", amount_yen: 800 },
-
-  { from: "留寿都", to: "ふじ鮨", amount_yen: 800 },
-  { from: "留寿都", to: "ヒルトン", amount_yen: 800 },
-  { from: "留寿都", to: "リッツカールトン", amount_yen: 800 },
-  { from: "留寿都", to: "五色", amount_yen: 800 },
-  { from: "留寿都", to: "倶知安", amount_yen: 1000 },
-
-  { from: "蘭越", to: "会社", amount_yen: 800 },
-  { from: "蘭越", to: "真狩市街地", amount_yen: 800 },
-  { from: "蘭越", to: "今井", amount_yen: 900 },
-  { from: "蘭越", to: "ニセコ寮", amount_yen: 700 },
-  { from: "蘭越", to: "京極", amount_yen: 1200 },
-  { from: "蘭越", to: "ふじ鮨", amount_yen: 700 },
-  { from: "蘭越", to: "ヒルトン", amount_yen: 500 },
-  { from: "蘭越", to: "リッツカールトン", amount_yen: 500 },
-  { from: "蘭越", to: "五色", amount_yen: 500 },
-  { from: "蘭越", to: "倶知安", amount_yen: 900 },
-
-  { from: "ふじ鮨", to: "ヒルトン", amount_yen: 300 },
-  { from: "ふじ鮨", to: "リッツカールトン", amount_yen: 300 },
-  { from: "リッツカールトン", to: "五色", amount_yen: 100 },
-  { from: "リッツカールトン", to: "ヒルトン", amount_yen: 100 },
-];
-
-const SEED_DISTANCES: SeedDistance[] = [
-  { from: "会社", to: "真狩市街地", distance_km: 6 },
-  { from: "会社", to: "京極", distance_km: 19 },
-  { from: "会社", to: "喜茂別", distance_km: 27 },
-  { from: "会社", to: "留寿都", distance_km: 20 },
-  { from: "真狩市街地", to: "京極", distance_km: 15 },
-  { from: "真狩市街地", to: "喜茂別", distance_km: 18 },
-  { from: "真狩市街地", to: "留寿都", distance_km: 11 },
-  { from: "京極", to: "喜茂別", distance_km: 10 },
-  { from: "京極", to: "倶知安", distance_km: 17 },
-  { from: "喜茂別", to: "留寿都", distance_km: 8 },
-  { from: "真狩市街地", to: "倶知安", distance_km: 23 },
-  { from: "ふじ鮨", to: "ヒルトン", distance_km: 9 },
-  { from: "ふじ鮨", to: "リッツカールトン", distance_km: 9 },
-  { from: "リッツカールトン", to: "五色", distance_km: 2 },
-  { from: "リッツカールトン", to: "ヒルトン", distance_km: 2 },
-];
-
-const styles = {
+const styles: Record<string, CSSProperties> = {
   page: {
     minHeight: "100vh",
     width: "100%",
@@ -217,110 +77,40 @@ const styles = {
     background:
       "radial-gradient(circle at top, rgba(24,80,180,0.18), transparent 28%), linear-gradient(180deg, #020817 0%, #030712 100%)",
     color: "#fff",
-    padding: "20px 14px 56px",
+    padding: "16px 12px 48px",
     fontFamily:
       'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  } as React.CSSProperties,
+  },
 
   container: {
     width: "100%",
-    maxWidth: 980,
+    maxWidth: 920,
     margin: "0 auto",
-  } as React.CSSProperties,
+  },
 
   topbar: {
+    width: "100%",
     display: "flex",
     flexDirection: "column",
-    alignItems: "flex-start",
-    justifyContent: "flex-start",
+    alignItems: "stretch",
     gap: 14,
-    marginBottom: 22,
-  } as React.CSSProperties,
+    marginBottom: 16,
+  },
 
   title: {
-    fontSize: "clamp(42px, 11vw, 72px)",
-    fontWeight: 800,
-    letterSpacing: "-0.05em",
     margin: 0,
+    fontSize: "clamp(34px, 11vw, 62px)",
+    fontWeight: 900,
+    letterSpacing: "-0.05em",
     lineHeight: 1.02,
-  } as React.CSSProperties,
+    textAlign: "left",
+    wordBreak: "keep-all",
+  },
 
-  card: {
-    width: "100%",
-    border: "1px solid rgba(255,255,255,0.08)",
-    background: "rgba(2, 6, 23, 0.78)",
-    borderRadius: 24,
-    padding: 18,
-    boxShadow: "0 16px 50px rgba(0,0,0,0.30)",
-    backdropFilter: "blur(12px)",
-  } as React.CSSProperties,
-
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 800,
-    margin: "0 0 14px",
-  } as React.CSSProperties,
-
-  input: {
-    width: "100%",
-    maxWidth: "100%",
-    borderRadius: 14,
-    border: "1px solid rgba(255,255,255,0.10)",
-    background: "rgba(0,0,0,0.18)",
-    color: "#fff",
-    padding: "14px 14px",
-    outline: "none",
-    fontSize: 15,
-    boxSizing: "border-box",
-    display: "block",
-  } as React.CSSProperties,
-
-  select: {
-    width: "100%",
-    maxWidth: "100%",
-    borderRadius: 14,
-    border: "1px solid rgba(255,255,255,0.10)",
-    background: "rgba(0,0,0,0.18)",
-    color: "#fff",
-    padding: "14px 14px",
-    outline: "none",
-    fontSize: 15,
-    boxSizing: "border-box",
-    display: "block",
-  } as React.CSSProperties,
-
-  primaryBtn: {
-    border: "1px solid rgba(99,102,241,0.55)",
-    background: "#2563eb",
-    color: "#fff",
-    borderRadius: 14,
-    padding: "12px 18px",
-    fontWeight: 800,
-    fontSize: 14,
-    cursor: "pointer",
-  } as React.CSSProperties,
-
-  secondaryBtn: {
-    border: "1px solid rgba(255,255,255,0.10)",
-    background: "rgba(255,255,255,0.04)",
-    color: "#fff",
-    borderRadius: 14,
-    padding: "12px 18px",
-    fontWeight: 700,
-    fontSize: 14,
-    cursor: "pointer",
-  } as React.CSSProperties,
-
-  dangerBtn: {
-    border: "1px solid rgba(220,38,38,0.5)",
-    background: "#b91c1c",
-    color: "#fff",
-    borderRadius: 12,
-    padding: "10px 14px",
-    fontWeight: 800,
-    fontSize: 13,
-    cursor: "pointer",
-  } as React.CSSProperties,
+  backWrap: {
+    display: "flex",
+    justifyContent: "flex-start",
+  },
 
   ghostLink: {
     display: "inline-flex",
@@ -336,77 +126,113 @@ const styles = {
     fontWeight: 800,
     fontSize: 16,
     whiteSpace: "nowrap",
-  } as React.CSSProperties,
+    boxSizing: "border-box",
+  },
+
+  card: {
+    width: "100%",
+    maxWidth: "100%",
+    border: "1px solid rgba(255,255,255,0.08)",
+    background: "rgba(2, 6, 23, 0.82)",
+    borderRadius: 24,
+    padding: 16,
+    boxShadow: "0 16px 50px rgba(0,0,0,0.30)",
+    backdropFilter: "blur(12px)",
+    boxSizing: "border-box",
+    overflow: "hidden",
+  },
+
+  block: {
+    width: "100%",
+    display: "grid",
+    gap: 12,
+    boxSizing: "border-box",
+  },
+
+  sectionTitle: {
+    fontSize: 17,
+    fontWeight: 900,
+    margin: "0 0 10px",
+    lineHeight: 1.3,
+  },
+
+  label: {
+    fontSize: 14,
+    fontWeight: 800,
+    marginBottom: 6,
+    color: "rgba(255,255,255,0.92)",
+  },
+
+  input: {
+    width: "100%",
+    maxWidth: "100%",
+    minWidth: 0,
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(0,0,0,0.18)",
+    color: "#fff",
+    padding: "14px 14px",
+    outline: "none",
+    fontSize: 16,
+    boxSizing: "border-box",
+    display: "block",
+  },
+
+  select: {
+    width: "100%",
+    maxWidth: "100%",
+    minWidth: 0,
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(0,0,0,0.18)",
+    color: "#fff",
+    padding: "14px 14px",
+    outline: "none",
+    fontSize: 16,
+    boxSizing: "border-box",
+    display: "block",
+  },
+
+  primaryBtn: {
+    border: "1px solid rgba(99,102,241,0.55)",
+    background: "#2563eb",
+    color: "#fff",
+    borderRadius: 16,
+    padding: "14px 18px",
+    fontWeight: 900,
+    fontSize: 16,
+    cursor: "pointer",
+    width: "fit-content",
+  },
+
+  secondaryBtn: {
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(255,255,255,0.04)",
+    color: "#fff",
+    borderRadius: 16,
+    padding: "14px 18px",
+    fontWeight: 800,
+    fontSize: 16,
+    cursor: "pointer",
+    width: "fit-content",
+  },
+
+  dangerBtn: {
+    border: "1px solid rgba(220,38,38,0.50)",
+    background: "#b91c1c",
+    color: "#fff",
+    borderRadius: 12,
+    padding: "10px 14px",
+    fontWeight: 800,
+    fontSize: 13,
+    cursor: "pointer",
+  },
 
   hr: {
     border: "none",
     borderTop: "1px solid rgba(255,255,255,0.08)",
     margin: "18px 0",
-  } as React.CSSProperties,
-
-  row: {
-    display: "grid",
-    gap: 12,
-    width: "100%",
-  } as React.CSSProperties,
-
-  itemCard: {
-    width: "100%",
-    border: "1px solid rgba(255,255,255,0.08)",
-    background: "rgba(255,255,255,0.03)",
-    borderRadius: 16,
-    padding: 14,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-    flexWrap: "wrap",
-    boxSizing: "border-box",
-  } as React.CSSProperties,
-
-  itemMeta: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-    minWidth: 0,
-  } as React.CSSProperties,
-
-  itemTitle: {
-    fontSize: 16,
-    fontWeight: 800,
-    lineHeight: 1.3,
-    wordBreak: "break-word",
-  } as React.CSSProperties,
-
-  itemSub: {
-    fontSize: 13,
-    opacity: 0.72,
-    lineHeight: 1.4,
-    wordBreak: "break-word",
-  } as React.CSSProperties,
-
-  collapsibleBtn: {
-    width: "100%",
-    borderRadius: 16,
-    border: "1px solid rgba(255,255,255,0.10)",
-    background: "rgba(255,255,255,0.04)",
-    color: "#fff",
-    padding: "14px 16px",
-    textAlign: "left" as const,
-    cursor: "pointer",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-    boxSizing: "border-box",
-  } as React.CSSProperties,
-
-  helper: {
-    fontSize: 12,
-    opacity: 0.7,
-    marginTop: 8,
-    lineHeight: 1.5,
-  } as React.CSSProperties,
+  },
 
   status: {
     fontSize: 13,
@@ -414,7 +240,84 @@ const styles = {
     opacity: 0.82,
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
-  } as React.CSSProperties,
+  },
+
+  helper: {
+    fontSize: 12,
+    opacity: 0.7,
+    lineHeight: 1.5,
+  },
+
+  collapsibleBtn: {
+    width: "100%",
+    maxWidth: "100%",
+    minWidth: 0,
+    borderRadius: 16,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(255,255,255,0.04)",
+    color: "#fff",
+    padding: "14px 16px",
+    textAlign: "left",
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    boxSizing: "border-box",
+  },
+
+  itemList: {
+    width: "100%",
+    display: "grid",
+    gap: 10,
+  },
+
+  itemCard: {
+    width: "100%",
+    maxWidth: "100%",
+    minWidth: 0,
+    border: "1px solid rgba(255,255,255,0.08)",
+    background: "rgba(255,255,255,0.03)",
+    borderRadius: 16,
+    padding: 14,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "stretch",
+    justifyContent: "flex-start",
+    gap: 12,
+    boxSizing: "border-box",
+  },
+
+  itemMeta: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    minWidth: 0,
+  },
+
+  itemTitle: {
+    fontSize: 15,
+    fontWeight: 900,
+    lineHeight: 1.35,
+    wordBreak: "break-word",
+  },
+
+  itemSub: {
+    fontSize: 13,
+    opacity: 0.72,
+    lineHeight: 1.45,
+    wordBreak: "break-word",
+  },
+
+  emptyCard: {
+    width: "100%",
+    border: "1px solid rgba(255,255,255,0.08)",
+    background: "rgba(255,255,255,0.03)",
+    borderRadius: 16,
+    padding: 14,
+    opacity: 0.72,
+    boxSizing: "border-box",
+  },
 };
 
 export default function AdminPage() {
@@ -462,9 +365,7 @@ export default function AdminPage() {
 
   const locationNameMap = useMemo(() => {
     const map = new Map<number, string>();
-    for (const l of locations) {
-      map.set(l.id, l.name);
-    }
+    for (const l of locations) map.set(l.id, l.name);
     return map;
   }, [locations]);
 
@@ -566,81 +467,6 @@ export default function AdminPage() {
     });
 
     return await readJsonOrThrow(res);
-  }
-
-  async function ensureLocationsSeeded() {
-    for (const name of SEED_LOCATIONS) {
-      await postJson("/api/admin/locations", { name });
-    }
-    await loadLocations(adminKey.trim());
-  }
-
-  async function handleSeedData() {
-    const ok = window.confirm(
-      "以前の地点・区間運賃・距離相場をまとめて入れます。続けますか？"
-    );
-    if (!ok) return;
-
-    try {
-      setLoading(true);
-      setStatusText("初期データ投入中…\n地点を作成しています…");
-
-      await ensureLocationsSeeded();
-
-      const latestLocationsRes = await fetch("/api/admin/locations", {
-        headers: { "x-admin-key": adminKey.trim() },
-      });
-      const latestLocationsJson = await readJsonOrThrow(latestLocationsRes);
-      const latestLocations = normalizeItems<LocationRow>(latestLocationsJson);
-
-      const nameToId = new Map<string, number>();
-      for (const loc of latestLocations) {
-        nameToId.set(loc.name, loc.id);
-      }
-
-      setStatusText("初期データ投入中…\n区間運賃を入れています…");
-
-      for (const row of SEED_FARES) {
-        const fromId = nameToId.get(row.from);
-        const toId = nameToId.get(row.to);
-        if (!fromId || !toId) continue;
-
-        await postJson("/api/admin/fares", {
-          from_id: fromId,
-          to_id: toId,
-          amount_yen: row.amount_yen,
-        });
-      }
-
-      setStatusText("初期データ投入中…\n距離相場を入れています…");
-
-      for (const row of SEED_DISTANCES) {
-        const fromId = nameToId.get(row.from);
-        const toId = nameToId.get(row.to);
-        if (!fromId || !toId) continue;
-
-        await postJson("/api/admin/route-distances", {
-          from_location_id: fromId,
-          to_location_id: toId,
-          distance_km: row.distance_km,
-        });
-      }
-
-      await Promise.all([
-        loadLocations(adminKey.trim()),
-        loadFares(adminKey.trim()),
-        loadRouteDistances(adminKey.trim()),
-      ]);
-
-      setStatusText("初期データを投入しました");
-      alert("初期データの投入が完了しました");
-    } catch (error) {
-      const msg = getErrorMessage(error, "初期データ投入に失敗しました");
-      setStatusText(msg);
-      alert(msg);
-    } finally {
-      setLoading(false);
-    }
   }
 
   async function handleAddDriver() {
@@ -889,10 +715,8 @@ export default function AdminPage() {
   ) {
     if (items.length === 0) {
       return (
-        <div style={{ ...styles.itemCard, opacity: 0.72 }}>
-          <div style={styles.itemMeta}>
-            <div style={styles.itemTitle}>{emptyText}</div>
-          </div>
+        <div style={styles.emptyCard}>
+          <div style={styles.itemTitle}>{emptyText}</div>
         </div>
       );
     }
@@ -915,18 +739,20 @@ export default function AdminPage() {
     <div style={styles.page}>
       <div style={styles.container}>
         <div style={styles.topbar}>
-  <h1 style={styles.title}>管理ページ</h1>
-  <Link href="/" style={styles.ghostLink}>
-    ← 入力ページへ
-  </Link>
-</div>
+          <h1 style={styles.title}>管理ページ</h1>
+          <div style={styles.backWrap}>
+            <Link href="/" style={styles.ghostLink}>
+              ← 入力ページへ
+            </Link>
+          </div>
+        </div>
 
         <div style={styles.card}>
           <h2 style={{ ...styles.sectionTitle, fontSize: 26, marginBottom: 18 }}>設定</h2>
 
-          <div style={styles.row}>
+          <div style={styles.block}>
             <div>
-              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>パスワード</div>
+              <div style={styles.label}>パスワード</div>
               <input
                 type="password"
                 value={adminKey}
@@ -937,21 +763,22 @@ export default function AdminPage() {
             </div>
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-  <button
-    type="button"
-    style={styles.secondaryBtn}
-    onClick={reloadAll}
-    disabled={loading}
-  >
-    再読み込み
-  </button>
-</div>
+              <button
+                type="button"
+                style={styles.secondaryBtn}
+                onClick={reloadAll}
+                disabled={loading}
+              >
+                再読み込み
+              </button>
+            </div>
 
-{!!statusText && <div style={styles.status}>{statusText}</div>}          </div>
+            {!!statusText && <div style={styles.status}>{statusText}</div>}
+          </div>
 
           <hr style={styles.hr} />
 
-          <div style={styles.row}>
+          <div style={styles.block}>
             <h3 style={styles.sectionTitle}>運転手を追加</h3>
             <input
               type="text"
@@ -961,7 +788,12 @@ export default function AdminPage() {
               style={styles.input}
             />
             <div>
-              <button type="button" style={styles.primaryBtn} onClick={handleAddDriver} disabled={loading}>
+              <button
+                type="button"
+                style={styles.primaryBtn}
+                onClick={handleAddDriver}
+                disabled={loading}
+              >
                 追加
               </button>
             </div>
@@ -969,7 +801,7 @@ export default function AdminPage() {
 
           <hr style={styles.hr} />
 
-          <div style={styles.row}>
+          <div style={styles.block}>
             <h3 style={styles.sectionTitle}>車両を追加</h3>
             <input
               type="text"
@@ -979,7 +811,12 @@ export default function AdminPage() {
               style={styles.input}
             />
             <div>
-              <button type="button" style={styles.primaryBtn} onClick={handleAddVehicle} disabled={loading}>
+              <button
+                type="button"
+                style={styles.primaryBtn}
+                onClick={handleAddVehicle}
+                disabled={loading}
+              >
                 追加
               </button>
             </div>
@@ -987,7 +824,7 @@ export default function AdminPage() {
 
           <hr style={styles.hr} />
 
-          <div style={styles.row}>
+          <div style={styles.block}>
             <h3 style={styles.sectionTitle}>地点を追加</h3>
             <input
               type="text"
@@ -997,7 +834,12 @@ export default function AdminPage() {
               style={styles.input}
             />
             <div>
-              <button type="button" style={styles.primaryBtn} onClick={handleAddLocation} disabled={loading}>
+              <button
+                type="button"
+                style={styles.primaryBtn}
+                onClick={handleAddLocation}
+                disabled={loading}
+              >
                 追加
               </button>
             </div>
@@ -1005,10 +847,14 @@ export default function AdminPage() {
 
           <hr style={styles.hr} />
 
-          <div style={styles.row}>
+          <div style={styles.block}>
             <h3 style={styles.sectionTitle}>区間運賃を追加 / 更新</h3>
 
-            <select value={fareFromId} onChange={(e) => setFareFromId(e.target.value)} style={styles.select}>
+            <select
+              value={fareFromId}
+              onChange={(e) => setFareFromId(e.target.value)}
+              style={styles.select}
+            >
               <option value="">出発地を選択</option>
               {locations.map((loc) => (
                 <option key={loc.id} value={loc.id}>
@@ -1017,7 +863,11 @@ export default function AdminPage() {
               ))}
             </select>
 
-            <select value={fareToId} onChange={(e) => setFareToId(e.target.value)} style={styles.select}>
+            <select
+              value={fareToId}
+              onChange={(e) => setFareToId(e.target.value)}
+              style={styles.select}
+            >
               <option value="">到着地を選択</option>
               {locations.map((loc) => (
                 <option key={loc.id} value={loc.id}>
@@ -1037,7 +887,12 @@ export default function AdminPage() {
             />
 
             <div>
-              <button type="button" style={styles.primaryBtn} onClick={handleUpsertFare} disabled={loading}>
+              <button
+                type="button"
+                style={styles.primaryBtn}
+                onClick={handleUpsertFare}
+                disabled={loading}
+              >
                 追加 / 更新
               </button>
             </div>
@@ -1045,7 +900,7 @@ export default function AdminPage() {
 
           <hr style={styles.hr} />
 
-          <div style={styles.row}>
+          <div style={styles.block}>
             <h3 style={styles.sectionTitle}>区間距離を追加 / 更新</h3>
 
             <select
@@ -1102,38 +957,48 @@ export default function AdminPage() {
 
           <hr style={styles.hr} />
 
-          <div style={{ display: "grid", gap: 12 }}>
-            <button type="button" style={styles.collapsibleBtn} onClick={() => setDriversOpen((v) => !v)}>
-              <span style={{ fontWeight: 800, fontSize: 18 }}>運転手一覧</span>
+          <div style={{ display: "grid", gap: 12, width: "100%" }}>
+            <button
+              type="button"
+              style={styles.collapsibleBtn}
+              onClick={() => setDriversOpen((v) => !v)}
+            >
+              <span style={{ fontWeight: 900, fontSize: 18 }}>運転手一覧</span>
               <span style={{ opacity: 0.72 }}>{driversOpen ? "閉じる" : "開く"}</span>
             </button>
             {driversOpen && (
-              <div style={{ display: "grid", gap: 10 }}>
+              <div style={styles.itemList}>
                 {renderSimpleList(drivers, handleDeleteDriver, "まだ運転手はありません")}
               </div>
             )}
 
-            <button type="button" style={styles.collapsibleBtn} onClick={() => setVehiclesOpen((v) => !v)}>
-              <span style={{ fontWeight: 800, fontSize: 18 }}>車両一覧</span>
+            <button
+              type="button"
+              style={styles.collapsibleBtn}
+              onClick={() => setVehiclesOpen((v) => !v)}
+            >
+              <span style={{ fontWeight: 900, fontSize: 18 }}>車両一覧</span>
               <span style={{ opacity: 0.72 }}>{vehiclesOpen ? "閉じる" : "開く"}</span>
             </button>
             {vehiclesOpen && (
-              <div style={{ display: "grid", gap: 10 }}>
+              <div style={styles.itemList}>
                 {renderSimpleList(vehicles, handleDeleteVehicle, "まだ車両はありません")}
               </div>
             )}
 
-            <button type="button" style={styles.collapsibleBtn} onClick={() => setLocationsOpen((v) => !v)}>
-              <span style={{ fontWeight: 800, fontSize: 18 }}>地点一覧</span>
+            <button
+              type="button"
+              style={styles.collapsibleBtn}
+              onClick={() => setLocationsOpen((v) => !v)}
+            >
+              <span style={{ fontWeight: 900, fontSize: 18 }}>地点一覧</span>
               <span style={{ opacity: 0.72 }}>{locationsOpen ? "閉じる" : "開く"}</span>
             </button>
             {locationsOpen && (
-              <div style={{ display: "grid", gap: 10 }}>
+              <div style={styles.itemList}>
                 {locations.length === 0 ? (
-                  <div style={{ ...styles.itemCard, opacity: 0.72 }}>
-                    <div style={styles.itemMeta}>
-                      <div style={styles.itemTitle}>まだ地点はありません</div>
-                    </div>
+                  <div style={styles.emptyCard}>
+                    <div style={styles.itemTitle}>まだ地点はありません</div>
                   </div>
                 ) : (
                   locations.map((item) => (
@@ -1146,7 +1011,11 @@ export default function AdminPage() {
                         </div>
                       </div>
 
-                      <button style={styles.dangerBtn} onClick={() => handleDeleteLocation(item.id)} type="button">
+                      <button
+                        style={styles.dangerBtn}
+                        onClick={() => handleDeleteLocation(item.id)}
+                        type="button"
+                      >
                         削除
                       </button>
                     </div>
@@ -1155,17 +1024,19 @@ export default function AdminPage() {
               </div>
             )}
 
-            <button type="button" style={styles.collapsibleBtn} onClick={() => setFaresOpen((v) => !v)}>
-              <span style={{ fontWeight: 800, fontSize: 18 }}>区間運賃一覧</span>
+            <button
+              type="button"
+              style={styles.collapsibleBtn}
+              onClick={() => setFaresOpen((v) => !v)}
+            >
+              <span style={{ fontWeight: 900, fontSize: 18 }}>区間運賃一覧</span>
               <span style={{ opacity: 0.72 }}>{faresOpen ? "閉じる" : "開く"}</span>
             </button>
             {faresOpen && (
-              <div style={{ display: "grid", gap: 10 }}>
+              <div style={styles.itemList}>
                 {fares.length === 0 ? (
-                  <div style={{ ...styles.itemCard, opacity: 0.72 }}>
-                    <div style={styles.itemMeta}>
-                      <div style={styles.itemTitle}>まだ区間運賃はありません</div>
-                    </div>
+                  <div style={styles.emptyCard}>
+                    <div style={styles.itemTitle}>まだ区間運賃はありません</div>
                   </div>
                 ) : (
                   fares.map((row) => (
@@ -1180,7 +1051,11 @@ export default function AdminPage() {
                         </div>
                       </div>
 
-                      <button style={styles.dangerBtn} onClick={() => handleDeleteFare(row.id)} type="button">
+                      <button
+                        style={styles.dangerBtn}
+                        onClick={() => handleDeleteFare(row.id)}
+                        type="button"
+                      >
                         削除
                       </button>
                     </div>
@@ -1189,17 +1064,19 @@ export default function AdminPage() {
               </div>
             )}
 
-            <button type="button" style={styles.collapsibleBtn} onClick={() => setDistancesOpen((v) => !v)}>
-              <span style={{ fontWeight: 800, fontSize: 18 }}>距離相場一覧</span>
+            <button
+              type="button"
+              style={styles.collapsibleBtn}
+              onClick={() => setDistancesOpen((v) => !v)}
+            >
+              <span style={{ fontWeight: 900, fontSize: 18 }}>距離相場一覧</span>
               <span style={{ opacity: 0.72 }}>{distancesOpen ? "閉じる" : "開く"}</span>
             </button>
             {distancesOpen && (
-              <div style={{ display: "grid", gap: 10 }}>
+              <div style={styles.itemList}>
                 {routeDistances.length === 0 ? (
-                  <div style={{ ...styles.itemCard, opacity: 0.72 }}>
-                    <div style={styles.itemMeta}>
-                      <div style={styles.itemTitle}>まだ距離相場はありません</div>
-                    </div>
+                  <div style={styles.emptyCard}>
+                    <div style={styles.itemTitle}>まだ距離相場はありません</div>
                   </div>
                 ) : (
                   routeDistances.map((row) => (
