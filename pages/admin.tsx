@@ -209,77 +209,86 @@ const SEED_DISTANCES: SeedDistance[] = [
   { from: "リッツカールトン", to: "ヒルトン", distance_km: 2 },
 ];
 
-const styles: Record<string, CSSProperties> = {
+const styles = {
   page: {
-  minHeight: "100vh",
-  width: "100%",
-  overflowX: "hidden",
-  background:
-    "radial-gradient(circle at top, rgba(24,80,180,0.18), transparent 28%), linear-gradient(180deg, #020817 0%, #030712 100%)",
-  color: "#fff",
-  padding: "32px 16px 72px",
-  fontFamily:
-    'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-},  
+    minHeight: "100vh",
+    width: "100%",
+    overflowX: "hidden",
+    background:
+      "radial-gradient(circle at top, rgba(24,80,180,0.18), transparent 28%), linear-gradient(180deg, #020817 0%, #030712 100%)",
+    color: "#fff",
+    padding: "20px 14px 56px",
+    fontFamily:
+      'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  } as React.CSSProperties,
+
   container: {
-  width: "100%",
-  maxWidth: 980,
-  margin: "0 auto",
-},
+    width: "100%",
+    maxWidth: 980,
+    margin: "0 auto",
+  } as React.CSSProperties,
+
   topbar: {
     display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 16,
-    marginBottom: 28,
-    flexWrap: "wrap",
-  },
+    flexDirection: "column",
+    alignItems: "flex-start",
+    justifyContent: "flex-start",
+    gap: 14,
+    marginBottom: 22,
+  } as React.CSSProperties,
+
   title: {
-    fontSize: 54,
+    fontSize: "clamp(42px, 11vw, 72px)",
     fontWeight: 800,
-    letterSpacing: "-0.03em",
+    letterSpacing: "-0.05em",
     margin: 0,
-    lineHeight: 1.05,
-  },
+    lineHeight: 1.02,
+  } as React.CSSProperties,
+
   card: {
-  width: "100%",
-  border: "1px solid rgba(255,255,255,0.08)",
-  background: "rgba(2, 6, 23, 0.78)",
-  borderRadius: 24,
-  padding: 18,
-  boxShadow: "0 16px 50px rgba(0,0,0,0.30)",
-  backdropFilter: "blur(12px)",
-},  sectionTitle: {
+    width: "100%",
+    border: "1px solid rgba(255,255,255,0.08)",
+    background: "rgba(2, 6, 23, 0.78)",
+    borderRadius: 24,
+    padding: 18,
+    boxShadow: "0 16px 50px rgba(0,0,0,0.30)",
+    backdropFilter: "blur(12px)",
+  } as React.CSSProperties,
+
+  sectionTitle: {
     fontSize: 18,
     fontWeight: 800,
     margin: "0 0 14px",
-  },
+  } as React.CSSProperties,
+
   input: {
-  width: "100%",
-  maxWidth: "100%",
-  borderRadius: 14,
-  border: "1px solid rgba(255,255,255,0.10)",
-  background: "rgba(0,0,0,0.18)",
-  color: "#fff",
-  padding: "14px 14px",
-  outline: "none",
-  fontSize: 15,
-  boxSizing: "border-box",
-  display: "block",
-},
+    width: "100%",
+    maxWidth: "100%",
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(0,0,0,0.18)",
+    color: "#fff",
+    padding: "14px 14px",
+    outline: "none",
+    fontSize: 15,
+    boxSizing: "border-box",
+    display: "block",
+  } as React.CSSProperties,
+
   select: {
-  width: "100%",
-  maxWidth: "100%",
-  borderRadius: 14,
-  border: "1px solid rgba(255,255,255,0.10)",
-  background: "rgba(0,0,0,0.18)",
-  color: "#fff",
-  padding: "14px 14px",
-  outline: "none",
-  fontSize: 15,
-  boxSizing: "border-box",
-  display: "block",
-},
+    width: "100%",
+    maxWidth: "100%",
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(0,0,0,0.18)",
+    color: "#fff",
+    padding: "14px 14px",
+    outline: "none",
+    fontSize: 15,
+    boxSizing: "border-box",
+    display: "block",
+  } as React.CSSProperties,
+
   primaryBtn: {
     border: "1px solid rgba(99,102,241,0.55)",
     background: "#2563eb",
@@ -289,7 +298,8 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 800,
     fontSize: 14,
     cursor: "pointer",
-  },
+  } as React.CSSProperties,
+
   secondaryBtn: {
     border: "1px solid rgba(255,255,255,0.10)",
     background: "rgba(255,255,255,0.04)",
@@ -299,17 +309,8 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 700,
     fontSize: 14,
     cursor: "pointer",
-  },
-  accentBtn: {
-    border: "1px solid rgba(56,189,248,0.5)",
-    background: "rgba(8, 47, 73, 0.95)",
-    color: "#dbeafe",
-    borderRadius: 14,
-    padding: "12px 18px",
-    fontWeight: 800,
-    fontSize: 14,
-    cursor: "pointer",
-  },
+  } as React.CSSProperties,
+
   dangerBtn: {
     border: "1px solid rgba(220,38,38,0.5)",
     background: "#b91c1c",
@@ -319,31 +320,38 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 800,
     fontSize: 13,
     cursor: "pointer",
-  },
+  } as React.CSSProperties,
+
   ghostLink: {
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    minHeight: 46,
-    padding: "0 18px",
-    borderRadius: 14,
+    minHeight: 54,
+    padding: "0 22px",
+    borderRadius: 18,
     border: "1px solid rgba(255,255,255,0.10)",
     background: "rgba(255,255,255,0.05)",
     color: "#fff",
     textDecoration: "none",
     fontWeight: 800,
+    fontSize: 16,
     whiteSpace: "nowrap",
-  },
+  } as React.CSSProperties,
+
   hr: {
     border: "none",
     borderTop: "1px solid rgba(255,255,255,0.08)",
     margin: "18px 0",
-  },
+  } as React.CSSProperties,
+
   row: {
     display: "grid",
     gap: 12,
-  },
+    width: "100%",
+  } as React.CSSProperties,
+
   itemCard: {
+    width: "100%",
     border: "1px solid rgba(255,255,255,0.08)",
     background: "rgba(255,255,255,0.03)",
     borderRadius: 16,
@@ -353,22 +361,30 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "space-between",
     gap: 12,
     flexWrap: "wrap",
-  },
+    boxSizing: "border-box",
+  } as React.CSSProperties,
+
   itemMeta: {
     display: "flex",
     flexDirection: "column",
     gap: 6,
-  },
+    minWidth: 0,
+  } as React.CSSProperties,
+
   itemTitle: {
     fontSize: 16,
     fontWeight: 800,
     lineHeight: 1.3,
-  },
+    wordBreak: "break-word",
+  } as React.CSSProperties,
+
   itemSub: {
     fontSize: 13,
     opacity: 0.72,
     lineHeight: 1.4,
-  },
+    wordBreak: "break-word",
+  } as React.CSSProperties,
+
   collapsibleBtn: {
     width: "100%",
     borderRadius: 16,
@@ -376,25 +392,29 @@ const styles: Record<string, CSSProperties> = {
     background: "rgba(255,255,255,0.04)",
     color: "#fff",
     padding: "14px 16px",
-    textAlign: "left",
+    textAlign: "left" as const,
     cursor: "pointer",
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
-  },
+    boxSizing: "border-box",
+  } as React.CSSProperties,
+
   helper: {
     fontSize: 12,
     opacity: 0.7,
     marginTop: 8,
     lineHeight: 1.5,
-  },
+  } as React.CSSProperties,
+
   status: {
     fontSize: 13,
     marginTop: 8,
     opacity: 0.82,
     whiteSpace: "pre-wrap",
-  },
+    wordBreak: "break-word",
+  } as React.CSSProperties,
 };
 
 export default function AdminPage() {
@@ -895,11 +915,11 @@ export default function AdminPage() {
     <div style={styles.page}>
       <div style={styles.container}>
         <div style={styles.topbar}>
-          <h1 style={styles.title}>管理ページ</h1>
-          <Link href="/" style={styles.ghostLink}>
-            ← 入力ページへ
-          </Link>
-        </div>
+  <h1 style={styles.title}>管理ページ</h1>
+  <Link href="/" style={styles.ghostLink}>
+    ← 入力ページへ
+  </Link>
+</div>
 
         <div style={styles.card}>
           <h2 style={{ ...styles.sectionTitle, fontSize: 26, marginBottom: 18 }}>設定</h2>
