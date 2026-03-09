@@ -773,12 +773,12 @@ export default function Page() {
       <div className="mx-auto w-full max-w-4xl">
         <div className="mb-5 flex flex-col gap-3 sm:mb-7 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 flex-1">
-            <h1 className="break-keep text-left text-[34px] font-extrabold leading-[1.06] tracking-[-0.05em] sm:text-[42px]">
-              ピックアップ手当
-            </h1>
-            <p className="mt-2 max-w-xl text-left text-[15px] leading-7 text-white/55 sm:text-lg">
-              通常ルートは料金表参照 / バスは一律2,000円
-            </p>
+            <h1 className="break-keep text-left text-[30px] font-extrabold leading-[1.08] tracking-[-0.05em] sm:text-[38px]">
+  ピックアップ手当
+</h1>
+            <p className="mt-2 max-w-xl text-left text-[14px] leading-7 text-white/55 sm:text-lg">
+  通常ルートは料金表参照 / バスは一律2,000円
+</p>
           </div>
 
           <div className="flex justify-start sm:justify-end">
