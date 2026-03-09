@@ -28,12 +28,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(400).json({ ok: false, error: "invalid payload" });
       }
 
+      if (from_id === to_id) {
+        return res.status(400).json({ ok: false, error: "same location is not allowed" });
+      }
+
       const { data, error } = await supabaseAdmin
         .from("fares")
-        .upsert(
-          { from_id, to_id, amount_yen },
-          { onConflict: "from_id,to_id" }
-        )
+        .upsert({ from_id, to_id, amount_yen }, { onConflict: "from_id,to_id" })
         .select("from_id,to_id,amount_yen")
         .single();
 
