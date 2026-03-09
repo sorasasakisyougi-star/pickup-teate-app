@@ -1,9 +1,18 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { assertAdminKeyFromRequest } from "@/lib/admin/assertAdminKey";
+import { assertAdminKey } from "@/lib/admin/assertAdminKey";
 import { supabaseAdmin } from "@/lib/admin/supabaseAdmin";
 
+type RouteDistanceRow = {
+  id: number;
+  from_location_id: number;
+  to_location_id: number;
+  distance_km: number;
+  created_at?: string;
+  updated_at?: string;
+};
+
 type Data =
-  | { ok: true; items?: any[]; item?: any }
+  | { ok: true; items?: any[]; item?: RouteDistanceRow | null }
   | { ok: false; error: string };
 
 export default async function handler(
@@ -11,7 +20,7 @@ export default async function handler(
   res: NextApiResponse<Data>
 ) {
   try {
-    assertAdminKeyFromRequest(req);
+    assertAdminKey(req);
 
     if (req.method === "GET") {
       const { data, error } = await supabaseAdmin
@@ -45,16 +54,22 @@ export default async function handler(
       const { from_location_id, to_location_id, distance_km } = req.body ?? {};
 
       if (!from_location_id || !to_location_id) {
-        return res.status(400).json({ ok: false, error: "出発地と到着地は必須です" });
+        return res
+          .status(400)
+          .json({ ok: false, error: "出発地と到着地は必須です" });
       }
 
       if (Number(from_location_id) === Number(to_location_id)) {
-        return res.status(400).json({ ok: false, error: "同じ地点同士は登録できません" });
+        return res
+          .status(400)
+          .json({ ok: false, error: "同じ地点同士は登録できません" });
       }
 
-      const distanceNum = Number(distance_km);
-      if (!Number.isFinite(distanceNum) || distanceNum < 0) {
-        return res.status(400).json({ ok: false, error: "距離は0以上の数値で入力してください" });
+      const km = Number(distance_km);
+      if (!Number.isFinite(km) || km < 0) {
+        return res
+          .status(400)
+          .json({ ok: false, error: "距離は0以上の数値で入力してください" });
       }
 
       const { data, error } = await supabaseAdmin
@@ -63,7 +78,7 @@ export default async function handler(
           {
             from_location_id: Number(from_location_id),
             to_location_id: Number(to_location_id),
-            distance_km: distanceNum,
+            distance_km: km,
           },
           {
             onConflict: "from_location_id,to_location_id",
@@ -102,7 +117,10 @@ export default async function handler(
     return res.status(405).json({ ok: false, error: "Method Not Allowed" });
   } catch (e: any) {
     const message =
-      e?.message === "UNAUTHORIZED" ? "Unauthorized" : e?.message || "Internal Server Error";
+      e?.message === "UNAUTHORIZED"
+        ? "Unauthorized"
+        : e?.message || "Internal Server Error";
+
     const status = e?.message === "UNAUTHORIZED" ? 401 : 500;
     return res.status(status).json({ ok: false, error: message });
   }
