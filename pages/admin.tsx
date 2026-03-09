@@ -18,10 +18,25 @@ type LocationRow = {
 };
 
 type FareRow = {
-  id?: number;
+  id: number;
   from_id: number;
   to_id: number;
   amount_yen: number;
+};
+
+type RouteDistanceRow = {
+  id: number;
+  from_location_id: number;
+  to_location_id: number;
+  distance_km: number;
+  from_location?: {
+    id: number;
+    name: string;
+  } | null;
+  to_location?: {
+    id: number;
+    name: string;
+  } | null;
 };
 
 async function readJsonOrThrow(res: Response) {
@@ -31,926 +46,989 @@ async function readJsonOrThrow(res: Response) {
     throw new Error(text || `HTTP ${res.status}`);
   }
 
-  if (!text) return [];
-  return JSON.parse(text);
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+function normalizeItems<T>(json: any): T[] {
+  if (!json) return [];
+  if (Array.isArray(json)) return json as T[];
+  if (Array.isArray(json.items)) return json.items as T[];
+  if (Array.isArray(json.data)) return json.data as T[];
+  return [];
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
 }
 
 const styles = {
   page: {
     minHeight: "100vh",
     background:
-      "radial-gradient(circle at top, rgba(40,56,120,0.18), transparent 28%), #05070b",
-    color: "#f3f6ff",
+      "radial-gradient(circle at top, rgba(24,80,180,0.18), transparent 28%), linear-gradient(180deg, #020817 0%, #030712 100%)",
+    color: "#fff",
+    padding: "32px 16px 72px",
     fontFamily:
       'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    padding: "20px 14px 56px",
-    boxSizing: "border-box" as const,
-  } as const,
+  } as React.CSSProperties,
 
-  wrap: {
-    maxWidth: 1080,
+  container: {
+    maxWidth: 980,
     margin: "0 auto",
-  } as const,
+  } as React.CSSProperties,
 
-  titleRow: {
+  topbar: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 12,
-    flexWrap: "wrap" as const,
-  } as const,
+    gap: 16,
+    marginBottom: 28,
+    flexWrap: "wrap",
+  } as React.CSSProperties,
 
   title: {
-    fontSize: "clamp(34px, 7vw, 44px)",
+    fontSize: 54,
     fontWeight: 800,
     letterSpacing: "-0.03em",
     margin: 0,
-  } as const,
+    lineHeight: 1.05,
+  } as React.CSSProperties,
 
-  backLink: {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    height: 40,
-    padding: "0 14px",
-    borderRadius: 10,
-    border: "1px solid rgba(107,125,172,0.24)",
-    background: "#131821",
-    color: "#eef2ff",
-    textDecoration: "none",
-    fontWeight: 700,
-    whiteSpace: "nowrap" as const,
-  } as const,
-
-  grid: {
-    display: "grid",
-    gridTemplateColumns: "1fr",
-    gap: 18,
-    marginTop: 22,
-  } as const,
-
-  section: {
-    background: "rgba(12,16,24,0.92)",
-    border: "1px solid rgba(110,130,190,0.18)",
-    borderRadius: 22,
+  card: {
+    border: "1px solid rgba(255,255,255,0.08)",
+    background: "rgba(2, 6, 23, 0.78)",
+    borderRadius: 24,
     padding: 18,
-    boxShadow: "0 20px 50px rgba(0,0,0,0.35)",
-  } as const,
+    boxShadow: "0 16px 50px rgba(0,0,0,0.30)",
+    backdropFilter: "blur(12px)",
+  } as React.CSSProperties,
 
   sectionTitle: {
-    fontSize: 28,
-    fontWeight: 800,
-    margin: "0 0 18px",
-  } as const,
-
-  subTitle: {
     fontSize: 18,
-    fontWeight: 700,
-    margin: "0 0 12px",
-  } as const,
-
-  label: {
-    display: "block",
-    fontSize: 13,
-    color: "#aeb7cb",
-    marginBottom: 8,
-    fontWeight: 700,
-  } as const,
-
-  column: {
-    display: "grid",
-    gap: 10,
-  } as const,
+    fontWeight: 800,
+    margin: "0 0 14px",
+  } as React.CSSProperties,
 
   input: {
     width: "100%",
-    height: 46,
-    borderRadius: 12,
-    border: "1px solid rgba(107,125,172,0.28)",
-    background: "#090c12",
-    color: "#f5f7ff",
-    padding: "0 14px",
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(0,0,0,0.18)",
+    color: "#fff",
+    padding: "14px 14px",
     outline: "none",
-    fontSize: 14,
-    boxSizing: "border-box" as const,
-  } as const,
+    fontSize: 15,
+    boxSizing: "border-box",
+  } as React.CSSProperties,
 
   select: {
     width: "100%",
-    height: 46,
-    borderRadius: 12,
-    border: "1px solid rgba(107,125,172,0.28)",
-    background: "#090c12",
-    color: "#f5f7ff",
-    padding: "0 14px",
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(0,0,0,0.18)",
+    color: "#fff",
+    padding: "14px 14px",
     outline: "none",
-    fontSize: 14,
-    boxSizing: "border-box" as const,
-  } as const,
-
-  buttonPrimary: {
-    height: 46,
-    borderRadius: 12,
-    border: "1px solid rgba(84,114,220,0.5)",
-    background: "#19327e",
-    color: "#ffffff",
-    padding: "0 16px",
-    fontWeight: 700,
-    cursor: "pointer",
-    whiteSpace: "nowrap" as const,
-  } as const,
-
-  buttonGhost: {
-    height: 40,
-    borderRadius: 10,
-    border: "1px solid rgba(107,125,172,0.24)",
-    background: "#131821",
-    color: "#eef2ff",
-    padding: "0 14px",
-    fontWeight: 700,
-    cursor: "pointer",
-    whiteSpace: "nowrap" as const,
-  } as const,
-
-  buttonDanger: {
-    height: 32,
-    borderRadius: 10,
-    border: "1px solid rgba(220,90,90,0.28)",
-    background: "rgba(120,28,28,0.22)",
-    color: "#ffd9d9",
-    padding: "0 10px",
-    fontWeight: 700,
-    cursor: "pointer",
-    whiteSpace: "nowrap" as const,
-    flexShrink: 0 as const,
-  } as const,
-
-  muted: {
-    color: "#96a0b8",
-    fontSize: 13,
-  } as const,
-
-  error: {
-    marginTop: 14,
-    background: "rgba(150,38,38,0.18)",
-    color: "#ffd1d1",
-    border: "1px solid rgba(220,90,90,0.28)",
-    borderRadius: 14,
-    padding: "12px 14px",
-    fontWeight: 700,
-    whiteSpace: "pre-wrap" as const,
-    wordBreak: "break-word" as const,
-  } as const,
-
-  success: {
-    marginTop: 14,
-    background: "rgba(40,110,70,0.18)",
-    color: "#d9ffe8",
-    border: "1px solid rgba(82,180,118,0.28)",
-    borderRadius: 14,
-    padding: "12px 14px",
-    fontWeight: 700,
-  } as const,
-
-  cardList: {
-    display: "grid",
-    gap: 10,
-    marginTop: 14,
-  } as const,
-
-  itemCard: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 12,
-    padding: "14px",
-    borderRadius: 16,
-    background: "#0a0d14",
-    border: "1px solid rgba(107,125,172,0.15)",
-  } as const,
-
-  itemMain: {
-    display: "flex",
-    flexDirection: "column" as const,
-    gap: 4,
-    minWidth: 0,
-    flex: 1,
-  },
-
-  itemTitle: {
-    fontWeight: 700,
     fontSize: 15,
-    color: "#f5f7ff",
-    wordBreak: "break-word" as const,
-    lineHeight: 1.5,
-  } as const,
+    boxSizing: "border-box",
+  } as React.CSSProperties,
 
-  badgeWrap: {
-    display: "flex",
-    gap: 8,
-    flexWrap: "wrap" as const,
-  } as const,
+  primaryBtn: {
+    border: "1px solid rgba(99,102,241,0.55)",
+    background: "#1d4ed8",
+    color: "#fff",
+    borderRadius: 14,
+    padding: "12px 18px",
+    fontWeight: 800,
+    fontSize: 14,
+    cursor: "pointer",
+  } as React.CSSProperties,
 
-  badge: {
+  secondaryBtn: {
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(255,255,255,0.04)",
+    color: "#fff",
+    borderRadius: 14,
+    padding: "12px 18px",
+    fontWeight: 700,
+    fontSize: 14,
+    cursor: "pointer",
+  } as React.CSSProperties,
+
+  dangerBtn: {
+    border: "1px solid rgba(220,38,38,0.5)",
+    background: "#b91c1c",
+    color: "#fff",
+    borderRadius: 12,
+    padding: "10px 14px",
+    fontWeight: 800,
+    fontSize: 13,
+    cursor: "pointer",
+  } as React.CSSProperties,
+
+  ghostLink: {
     display: "inline-flex",
     alignItems: "center",
-    height: 24,
-    padding: "0 10px",
-    borderRadius: 999,
-    background: "rgba(86,103,147,0.2)",
-    border: "1px solid rgba(107,125,172,0.2)",
-    color: "#c9d3ea",
-    fontSize: 12,
-    fontWeight: 700,
-    width: "fit-content" as const,
-  } as const,
-
-  divider: {
-    height: 1,
-    background: "rgba(107,125,172,0.14)",
-    margin: "18px 0",
-  } as const,
-
-  emptyBox: {
-    marginTop: 12,
-    padding: "16px 14px",
+    justifyContent: "center",
+    minHeight: 46,
+    padding: "0 18px",
     borderRadius: 14,
-    background: "#0a0d14",
-    border: "1px dashed rgba(107,125,172,0.22)",
-    color: "#98a3bb",
-    fontSize: 14,
-  } as const,
-
-  accordionButton: {
-    width: "100%",
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: "14px 16px",
-    borderRadius: 14,
-    border: "1px solid rgba(107,125,172,0.18)",
-    background: "#0a0d14",
-    color: "#f5f7ff",
-    cursor: "pointer",
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(255,255,255,0.05)",
+    color: "#fff",
+    textDecoration: "none",
     fontWeight: 800,
-    fontSize: 16,
-    textAlign: "left" as const,
-  } as const,
+    whiteSpace: "nowrap",
+  } as React.CSSProperties,
 
-  accordionBody: {
-    marginTop: 12,
-  } as const,
+  hr: {
+    border: "none",
+    borderTop: "1px solid rgba(255,255,255,0.08)",
+    margin: "18px 0",
+  } as React.CSSProperties,
+
+  row: {
+    display: "grid",
+    gap: 12,
+  } as React.CSSProperties,
+
+  itemCard: {
+    border: "1px solid rgba(255,255,255,0.08)",
+    background: "rgba(255,255,255,0.03)",
+    borderRadius: 16,
+    padding: 14,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    flexWrap: "wrap",
+  } as React.CSSProperties,
+
+  itemMeta: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  } as React.CSSProperties,
+
+  itemTitle: {
+    fontSize: 16,
+    fontWeight: 800,
+    lineHeight: 1.3,
+  } as React.CSSProperties,
+
+  itemSub: {
+    fontSize: 13,
+    opacity: 0.72,
+    lineHeight: 1.4,
+  } as React.CSSProperties,
+
+  collapsibleBtn: {
+    width: "100%",
+    borderRadius: 16,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(255,255,255,0.04)",
+    color: "#fff",
+    padding: "14px 16px",
+    textAlign: "left" as const,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  } as React.CSSProperties,
+
+  helper: {
+    fontSize: 12,
+    opacity: 0.7,
+    marginTop: 8,
+    lineHeight: 1.5,
+  } as React.CSSProperties,
+
+  status: {
+    fontSize: 13,
+    marginTop: 8,
+    opacity: 0.82,
+  } as React.CSSProperties,
 };
 
-function Accordion({
-  title,
-  count,
-  open,
-  onToggle,
-  children,
-}: {
-  title: string;
-  count: number;
-  open: boolean;
-  onToggle: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <button type="button" style={styles.accordionButton} onClick={onToggle}>
-        <span>
-          {title}
-          <span style={{ ...styles.muted, marginLeft: 8 }}>{count}件</span>
-        </span>
-        <span>{open ? "▲" : "▼"}</span>
-      </button>
-
-      {open ? <div style={styles.accordionBody}>{children}</div> : null}
-    </div>
-  );
-}
-
 export default function AdminPage() {
-  const [password, setPassword] = useState("");
+  const [adminKey, setAdminKey] = useState("");
+  const [statusText, setStatusText] = useState("");
 
   const [drivers, setDrivers] = useState<DriverRow[]>([]);
   const [vehicles, setVehicles] = useState<VehicleRow[]>([]);
   const [locations, setLocations] = useState<LocationRow[]>([]);
   const [fares, setFares] = useState<FareRow[]>([]);
-
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const [routeDistances, setRouteDistances] = useState<RouteDistanceRow[]>([]);
 
   const [driverName, setDriverName] = useState("");
   const [vehicleName, setVehicleName] = useState("");
   const [locationName, setLocationName] = useState("");
-  const [fareFromId, setFareFromId] = useState<string>("");
-  const [fareToId, setFareToId] = useState<string>("");
-  const [fareAmount, setFareAmount] = useState<string>("");
 
-  const [openDrivers, setOpenDrivers] = useState(false);
-  const [openVehicles, setOpenVehicles] = useState(false);
-  const [openLocations, setOpenLocations] = useState(false);
-  const [openFares, setOpenFares] = useState(false);
+  const [fareFromId, setFareFromId] = useState("");
+  const [fareToId, setFareToId] = useState("");
+  const [fareAmount, setFareAmount] = useState("");
 
-  const canSaveFare = useMemo(() => {
-    return !!fareFromId && !!fareToId && fareAmount.trim() !== "";
-  }, [fareFromId, fareToId, fareAmount]);
+  const [distanceFromId, setDistanceFromId] = useState("");
+  const [distanceToId, setDistanceToId] = useState("");
+  const [distanceKm, setDistanceKm] = useState("");
 
-  const sortedDrivers = useMemo(() => {
-    return [...drivers].sort((a, b) => a.name.localeCompare(b.name, "ja"));
-  }, [drivers]);
+  const [driversOpen, setDriversOpen] = useState(false);
+  const [vehiclesOpen, setVehiclesOpen] = useState(false);
+  const [locationsOpen, setLocationsOpen] = useState(false);
+  const [faresOpen, setFaresOpen] = useState(false);
+  const [distancesOpen, setDistancesOpen] = useState(false);
 
-  const sortedVehicles = useMemo(() => {
-    return [...vehicles].sort((a, b) => a.name.localeCompare(b.name, "ja"));
-  }, [vehicles]);
+  const [loading, setLoading] = useState(false);
 
-  const sortedLocations = useMemo(() => {
-    return [...locations].sort((a, b) => a.name.localeCompare(b.name, "ja"));
+  useEffect(() => {
+    const saved = typeof window !== "undefined" ? localStorage.getItem("pickup_admin_key") : "";
+    if (saved) {
+      setAdminKey(saved);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (adminKey.trim()) {
+      localStorage.setItem("pickup_admin_key", adminKey.trim());
+    }
+  }, [adminKey]);
+
+  const locationNameMap = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const l of locations) {
+      map.set(l.id, l.name);
+    }
+    return map;
   }, [locations]);
 
-  const fareView = useMemo(() => {
-    return [...fares]
-      .map((fare) => ({
-        ...fare,
-        fromName:
-          locations.find((x) => x.id === fare.from_id)?.name ?? String(fare.from_id),
-        toName:
-          locations.find((x) => x.id === fare.to_id)?.name ?? String(fare.to_id),
-      }))
-      .sort((a, b) => {
-        const left = `${a.fromName}-${a.toName}`;
-        const right = `${b.fromName}-${b.toName}`;
-        return left.localeCompare(right, "ja");
-      });
-  }, [fares, locations]);
-
-  async function loadDrivers() {
-    const res = await fetch("/api/admin/drivers");
-    const data = await readJsonOrThrow(res);
-    return Array.isArray(data) ? data : [];
+  async function loadDrivers(key: string) {
+    const res = await fetch("/api/admin/drivers", {
+      headers: { "x-admin-key": key },
+    });
+    const json = await readJsonOrThrow(res);
+    setDrivers(normalizeItems<DriverRow>(json));
   }
 
-  async function loadVehicles() {
-    const res = await fetch("/api/admin/vehicles");
-    const data = await readJsonOrThrow(res);
-    return Array.isArray(data) ? data : [];
+  async function loadVehicles(key: string) {
+    const res = await fetch("/api/admin/vehicles", {
+      headers: { "x-admin-key": key },
+    });
+    const json = await readJsonOrThrow(res);
+    setVehicles(normalizeItems<VehicleRow>(json));
   }
 
-  async function loadLocations() {
-    const res = await fetch("/api/admin/locations");
-    const data = await readJsonOrThrow(res);
-    return Array.isArray(data) ? data : [];
+  async function loadLocations(key: string) {
+    const res = await fetch("/api/admin/locations", {
+      headers: { "x-admin-key": key },
+    });
+    const json = await readJsonOrThrow(res);
+    setLocations(normalizeItems<LocationRow>(json));
   }
 
-  async function loadFares() {
-    const res = await fetch("/api/admin/fares");
-    const data = await readJsonOrThrow(res);
-    return Array.isArray(data) ? data : [];
+  async function loadFares(key: string) {
+    const res = await fetch("/api/admin/fares", {
+      headers: { "x-admin-key": key },
+    });
+    const json = await readJsonOrThrow(res);
+    setFares(normalizeItems<FareRow>(json));
   }
 
-  async function reloadAll(showMessage = false) {
+  async function loadRouteDistances(key: string) {
+    const res = await fetch("/api/admin/route-distances", {
+      headers: { "x-admin-key": key },
+    });
+    const json = await readJsonOrThrow(res);
+    setRouteDistances(normalizeItems<RouteDistanceRow>(json));
+  }
+
+  async function reloadAll() {
+    const key = adminKey.trim();
+    if (!key) {
+      alert("パスワードを入力してください");
+      return;
+    }
+
     setLoading(true);
-    setError("");
-    if (showMessage) setMessage("");
+    setStatusText("読み込み中…");
 
     try {
-      const [driversData, vehiclesData, locationsData, faresData] = await Promise.all([
-        loadDrivers(),
-        loadVehicles(),
-        loadLocations(),
-        loadFares(),
+      await Promise.all([
+        loadDrivers(key),
+        loadVehicles(key),
+        loadLocations(key),
+        loadFares(key),
+        loadRouteDistances(key),
       ]);
-
-      setDrivers(driversData);
-      setVehicles(vehiclesData);
-      setLocations(locationsData);
-      setFares(faresData);
-
-      if (showMessage) {
-        setMessage("再読み込みしました");
-      }
-    } catch (e) {
-      console.error("[admin reloadAll]", e);
-      setDrivers([]);
-      setVehicles([]);
-      setLocations([]);
-      setFares([]);
-      setError(e instanceof Error ? e.message : "load failed");
+      setStatusText("再読み込みしました");
+    } catch (error) {
+      const msg = getErrorMessage(error, "再読み込みに失敗しました");
+      setStatusText(msg);
+      alert(msg);
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => {
-    reloadAll(false);
-  }, []);
+  async function postJson(url: string, body: Record<string, unknown>) {
+    const key = adminKey.trim();
+    if (!key) throw new Error("パスワードを入力してください");
 
-  async function addDriver() {
-    if (!driverName.trim()) return;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-admin-key": key,
+      },
+      body: JSON.stringify(body),
+    });
+
+    return await readJsonOrThrow(res);
+  }
+
+  async function deleteJson(url: string, body: Record<string, unknown>) {
+    const key = adminKey.trim();
+    if (!key) throw new Error("パスワードを入力してください");
+
+    const res = await fetch(url, {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+        "x-admin-key": key,
+      },
+      body: JSON.stringify(body),
+    });
+
+    return await readJsonOrThrow(res);
+  }
+
+  async function handleAddDriver() {
+    if (!driverName.trim()) {
+      alert("運転手名を入力してください");
+      return;
+    }
 
     try {
-      setError("");
-      setMessage("");
-
-      const res = await fetch("/api/admin/drivers", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-key": password,
-        },
-        body: JSON.stringify({ name: driverName.trim() }),
-      });
-
-      await readJsonOrThrow(res);
+      setLoading(true);
+      setStatusText("運転手を保存中…");
+      await postJson("/api/admin/drivers", { name: driverName.trim() });
       setDriverName("");
-      await reloadAll(false);
-      setMessage("運転手を追加しました");
-      setOpenDrivers(true);
-    } catch (e) {
-      console.error("[addDriver]", e);
-      setError(e instanceof Error ? e.message : "運転手追加に失敗");
+      await loadDrivers(adminKey.trim());
+      setStatusText("運転手を追加しました");
+    } catch (error) {
+      const msg = getErrorMessage(error, "運転手の追加に失敗しました");
+      setStatusText(msg);
+      alert(msg);
+    } finally {
+      setLoading(false);
     }
   }
 
-  async function deleteDriver(id: number) {
+  async function handleDeleteDriver(id: number) {
     if (!window.confirm("この運転手を削除しますか？")) return;
 
     try {
-      setError("");
-      setMessage("");
-
-      const res = await fetch("/api/admin/drivers", {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-key": password,
-        },
-        body: JSON.stringify({ id }),
-      });
-
-      await readJsonOrThrow(res);
-      await reloadAll(false);
-      setMessage("運転手を削除しました");
-    } catch (e) {
-      console.error("[deleteDriver]", e);
-      setError(e instanceof Error ? e.message : "運転手削除に失敗");
+      setLoading(true);
+      setStatusText("運転手を削除中…");
+      await deleteJson("/api/admin/drivers", { id });
+      await loadDrivers(adminKey.trim());
+      setStatusText("運転手を削除しました");
+    } catch (error) {
+      const msg = getErrorMessage(error, "運転手の削除に失敗しました");
+      setStatusText(msg);
+      alert(msg);
+    } finally {
+      setLoading(false);
     }
   }
 
-  async function addVehicle() {
-    if (!vehicleName.trim()) return;
+  async function handleAddVehicle() {
+    if (!vehicleName.trim()) {
+      alert("車両名を入力してください");
+      return;
+    }
 
     try {
-      setError("");
-      setMessage("");
-
-      const res = await fetch("/api/admin/vehicles", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-key": password,
-        },
-        body: JSON.stringify({ name: vehicleName.trim() }),
-      });
-
-      await readJsonOrThrow(res);
+      setLoading(true);
+      setStatusText("車両を保存中…");
+      await postJson("/api/admin/vehicles", { name: vehicleName.trim() });
       setVehicleName("");
-      await reloadAll(false);
-      setMessage("車両を追加しました");
-      setOpenVehicles(true);
-    } catch (e) {
-      console.error("[addVehicle]", e);
-      setError(e instanceof Error ? e.message : "車両追加に失敗");
+      await loadVehicles(adminKey.trim());
+      setStatusText("車両を追加しました");
+    } catch (error) {
+      const msg = getErrorMessage(error, "車両の追加に失敗しました");
+      setStatusText(msg);
+      alert(msg);
+    } finally {
+      setLoading(false);
     }
   }
 
-  async function deleteVehicle(id: number) {
+  async function handleDeleteVehicle(id: number) {
     if (!window.confirm("この車両を削除しますか？")) return;
 
     try {
-      setError("");
-      setMessage("");
-
-      const res = await fetch("/api/admin/vehicles", {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-key": password,
-        },
-        body: JSON.stringify({ id }),
-      });
-
-      await readJsonOrThrow(res);
-      await reloadAll(false);
-      setMessage("車両を削除しました");
-    } catch (e) {
-      console.error("[deleteVehicle]", e);
-      setError(e instanceof Error ? e.message : "車両削除に失敗");
+      setLoading(true);
+      setStatusText("車両を削除中…");
+      await deleteJson("/api/admin/vehicles", { id });
+      await loadVehicles(adminKey.trim());
+      setStatusText("車両を削除しました");
+    } catch (error) {
+      const msg = getErrorMessage(error, "車両の削除に失敗しました");
+      setStatusText(msg);
+      alert(msg);
+    } finally {
+      setLoading(false);
     }
   }
 
-  async function addLocation() {
-    if (!locationName.trim()) return;
+  async function handleAddLocation() {
+    if (!locationName.trim()) {
+      alert("地点名を入力してください");
+      return;
+    }
 
     try {
-      setError("");
-      setMessage("");
-
-      const res = await fetch("/api/admin/locations", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-key": password,
-        },
-        body: JSON.stringify({
-          name: locationName.trim(),
-        }),
-      });
-
-      await readJsonOrThrow(res);
+      setLoading(true);
+      setStatusText("地点を保存中…");
+      await postJson("/api/admin/locations", { name: locationName.trim() });
       setLocationName("");
-      await reloadAll(false);
-      setMessage("地点を追加しました");
-      setOpenLocations(true);
-    } catch (e) {
-      console.error("[addLocation]", e);
-      setError(e instanceof Error ? e.message : "地点追加に失敗");
+      await loadLocations(adminKey.trim());
+      setStatusText("地点を追加しました");
+    } catch (error) {
+      const msg = getErrorMessage(error, "地点の追加に失敗しました");
+      setStatusText(msg);
+      alert(msg);
+    } finally {
+      setLoading(false);
     }
   }
 
-  async function deleteLocation(id: number) {
+  async function handleDeleteLocation(id: number) {
     if (!window.confirm("この地点を削除しますか？")) return;
 
     try {
-      setError("");
-      setMessage("");
-
-      const res = await fetch("/api/admin/locations", {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-key": password,
-        },
-        body: JSON.stringify({ id }),
-      });
-
-      await readJsonOrThrow(res);
-      await reloadAll(false);
-      setMessage("地点を削除しました");
-    } catch (e) {
-      console.error("[deleteLocation]", e);
-      setError(e instanceof Error ? e.message : "地点削除に失敗");
+      setLoading(true);
+      setStatusText("地点を削除中…");
+      await deleteJson("/api/admin/locations", { id });
+      await loadLocations(adminKey.trim());
+      setStatusText("地点を削除しました");
+    } catch (error) {
+      const msg = getErrorMessage(error, "地点の削除に失敗しました");
+      setStatusText(msg);
+      alert(msg);
+    } finally {
+      setLoading(false);
     }
   }
 
-  async function saveFare() {
-    if (!canSaveFare) return;
+  async function handleUpsertFare() {
+    if (!fareFromId || !fareToId) {
+      alert("出発地と到着地を選択してください");
+      return;
+    }
+
+    if (fareAmount.trim() === "") {
+      alert("金額を入力してください");
+      return;
+    }
+
+    const amount = Number(fareAmount);
+    if (!Number.isFinite(amount) || amount < 0) {
+      alert("金額は0以上の数値で入力してください");
+      return;
+    }
 
     try {
-      setError("");
-      setMessage("");
-
-      const res = await fetch("/api/admin/fares", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-key": password,
-        },
-        body: JSON.stringify({
-          from_id: Number(fareFromId),
-          to_id: Number(fareToId),
-          amount_yen: Number(fareAmount),
-        }),
+      setLoading(true);
+      setStatusText("区間運賃を保存中…");
+      await postJson("/api/admin/fares", {
+        from_id: Number(fareFromId),
+        to_id: Number(fareToId),
+        amount_yen: amount,
       });
-
-      await readJsonOrThrow(res);
+      setFareFromId("");
+      setFareToId("");
       setFareAmount("");
-      await reloadAll(false);
-      setMessage("金額を追加 / 更新しました");
-      setOpenFares(true);
-    } catch (e) {
-      console.error("[saveFare]", e);
-      setError(e instanceof Error ? e.message : "金額保存に失敗");
+      await loadFares(adminKey.trim());
+      setStatusText("区間運賃を保存しました");
+    } catch (error) {
+      const msg = getErrorMessage(error, "区間運賃の保存に失敗しました");
+      setStatusText(msg);
+      alert(msg);
+    } finally {
+      setLoading(false);
     }
   }
 
-  async function deleteFare(from_id: number, to_id: number) {
+  async function handleDeleteFare(id: number) {
     if (!window.confirm("この区間運賃を削除しますか？")) return;
 
     try {
-      setError("");
-      setMessage("");
-
-      const res = await fetch("/api/admin/fares", {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-key": password,
-        },
-        body: JSON.stringify({ from_id, to_id }),
-      });
-
-      await readJsonOrThrow(res);
-      await reloadAll(false);
-      setMessage("金額を削除しました");
-    } catch (e) {
-      console.error("[deleteFare]", e);
-      setError(e instanceof Error ? e.message : "金額削除に失敗");
+      setLoading(true);
+      setStatusText("区間運賃を削除中…");
+      await deleteJson("/api/admin/fares", { id });
+      await loadFares(adminKey.trim());
+      setStatusText("区間運賃を削除しました");
+    } catch (error) {
+      const msg = getErrorMessage(error, "区間運賃の削除に失敗しました");
+      setStatusText(msg);
+      alert(msg);
+    } finally {
+      setLoading(false);
     }
   }
 
-  return (
-    <>
-      <style jsx global>{`
-        html,
-        body,
-        #__next {
-          margin: 0;
-          padding: 0;
-          min-height: 100%;
-          background: #05070b;
-        }
+  async function handleUpsertRouteDistance() {
+    if (!distanceFromId || !distanceToId) {
+      alert("出発地と到着地を選択してください");
+      return;
+    }
 
-        body {
-          overflow-x: hidden;
-        }
-      `}</style>
+    if (distanceFromId === distanceToId) {
+      alert("同じ地点同士は登録できません");
+      return;
+    }
 
-      <main style={styles.page}>
-        <div style={styles.wrap}>
-          <div style={styles.titleRow}>
-            <h1 style={styles.title}>管理ページ</h1>
-            <Link href="/" style={styles.backLink}>
-              ← 入力ページへ
-            </Link>
-          </div>
+    if (distanceKm.trim() === "") {
+      alert("距離を入力してください");
+      return;
+    }
 
-          {error ? <div style={styles.error}>{error}</div> : null}
-          {!error && message ? <div style={styles.success}>{message}</div> : null}
+    const km = Number(distanceKm);
+    if (!Number.isFinite(km) || km < 0) {
+      alert("距離は0以上の数値で入力してください");
+      return;
+    }
 
-          <div style={styles.grid}>
-            <section style={styles.section}>
-              <h2 style={styles.sectionTitle}>設定</h2>
+    try {
+      setLoading(true);
+      setStatusText("距離相場を保存中…");
+      await postJson("/api/admin/route-distances", {
+        from_location_id: Number(distanceFromId),
+        to_location_id: Number(distanceToId),
+        distance_km: km,
+      });
+      setDistanceFromId("");
+      setDistanceToId("");
+      setDistanceKm("");
+      await loadRouteDistances(adminKey.trim());
+      setStatusText("距離相場を保存しました");
+    } catch (error) {
+      const msg = getErrorMessage(error, "距離相場の保存に失敗しました");
+      setStatusText(msg);
+      alert(msg);
+    } finally {
+      setLoading(false);
+    }
+  }
 
-              <label style={styles.label}>パスワード</label>
-              <div style={styles.column}>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  style={styles.input}
-                />
-                <button
-                  onClick={() => reloadAll(true)}
-                  disabled={loading}
-                  style={{
-                    ...styles.buttonGhost,
-                    width: "fit-content",
-                    opacity: loading ? 0.6 : 1,
-                    cursor: loading ? "not-allowed" : "pointer",
-                  }}
-                >
-                  {loading ? "読込中..." : "再読み込み"}
-                </button>
-              </div>
+  async function handleDeleteRouteDistance(id: number) {
+    if (!window.confirm("この距離相場を削除しますか？")) return;
 
-              <div style={styles.divider} />
+    try {
+      setLoading(true);
+      setStatusText("距離相場を削除中…");
+      await deleteJson("/api/admin/route-distances", { id });
+      await loadRouteDistances(adminKey.trim());
+      setStatusText("距離相場を削除しました");
+    } catch (error) {
+      const msg = getErrorMessage(error, "距離相場の削除に失敗しました");
+      setStatusText(msg);
+      alert(msg);
+    } finally {
+      setLoading(false);
+    }
+  }
 
-              <h3 style={styles.subTitle}>運転手を追加</h3>
-              <div style={styles.column}>
-                <input
-                  value={driverName}
-                  onChange={(e) => setDriverName(e.target.value)}
-                  placeholder="運転手名"
-                  style={styles.input}
-                />
-                <button
-                  style={{ ...styles.buttonPrimary, width: "fit-content" }}
-                  onClick={addDriver}
-                >
-                  追加
-                </button>
-              </div>
-
-              <div style={styles.divider} />
-
-              <h3 style={styles.subTitle}>車両を追加</h3>
-              <div style={styles.column}>
-                <input
-                  value={vehicleName}
-                  onChange={(e) => setVehicleName(e.target.value)}
-                  placeholder="車両名"
-                  style={styles.input}
-                />
-                <button
-                  style={{ ...styles.buttonPrimary, width: "fit-content" }}
-                  onClick={addVehicle}
-                >
-                  追加
-                </button>
-              </div>
-
-              <div style={styles.divider} />
-
-              <h3 style={styles.subTitle}>地点を追加</h3>
-              <div style={styles.column}>
-                <input
-                  value={locationName}
-                  onChange={(e) => setLocationName(e.target.value)}
-                  placeholder="地点名"
-                  style={styles.input}
-                />
-                <button
-                  style={{ ...styles.buttonPrimary, width: "fit-content" }}
-                  onClick={addLocation}
-                >
-                  追加
-                </button>
-              </div>
-
-              <div style={styles.divider} />
-
-              <h3 style={styles.subTitle}>区間運賃を追加 / 更新</h3>
-              <div style={styles.column}>
-                <select
-                  value={fareFromId}
-                  onChange={(e) => setFareFromId(e.target.value)}
-                  style={styles.select}
-                >
-                  <option value="">出発地を選択</option>
-                  {sortedLocations.map((loc) => (
-                    <option key={loc.id} value={loc.id}>
-                      {loc.name}
-                    </option>
-                  ))}
-                </select>
-
-                <select
-                  value={fareToId}
-                  onChange={(e) => setFareToId(e.target.value)}
-                  style={styles.select}
-                >
-                  <option value="">到着地を選択</option>
-                  {sortedLocations.map((loc) => (
-                    <option key={loc.id} value={loc.id}>
-                      {loc.name}
-                    </option>
-                  ))}
-                </select>
-
-                <input
-                  value={fareAmount}
-                  onChange={(e) => setFareAmount(e.target.value)}
-                  placeholder="金額（円）"
-                  inputMode="numeric"
-                  style={styles.input}
-                />
-
-                <button
-                  style={{
-                    ...styles.buttonPrimary,
-                    width: "fit-content",
-                    opacity: canSaveFare ? 1 : 0.55,
-                    cursor: canSaveFare ? "pointer" : "not-allowed",
-                  }}
-                  onClick={saveFare}
-                  disabled={!canSaveFare}
-                >
-                  追加 / 更新
-                </button>
-              </div>
-
-              <div style={{ marginTop: 14, ...styles.muted }}>
-                書き込み系はパスワードが一致した時だけ動く
-              </div>
-
-              <div style={styles.divider} />
-
-              <h2 style={styles.sectionTitle}>一覧</h2>
-
-              <Accordion
-                title="運転手一覧"
-                count={sortedDrivers.length}
-                open={openDrivers}
-                onToggle={() => setOpenDrivers((v) => !v)}
-              >
-                {sortedDrivers.length === 0 ? (
-                  <div style={styles.emptyBox}>まだ運転手がありません</div>
-                ) : (
-                  <div style={styles.cardList}>
-                    {sortedDrivers.map((d) => (
-                      <div key={d.id} style={styles.itemCard}>
-                        <div style={styles.itemMain}>
-                          <div style={styles.itemTitle}>{d.name}</div>
-                          <div style={styles.badge}>driver #{d.id}</div>
-                        </div>
-                        <button style={styles.buttonDanger} onClick={() => deleteDriver(d.id)}>
-                          削除
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </Accordion>
-
-              <div style={styles.divider} />
-
-              <Accordion
-                title="車両一覧"
-                count={sortedVehicles.length}
-                open={openVehicles}
-                onToggle={() => setOpenVehicles((v) => !v)}
-              >
-                {sortedVehicles.length === 0 ? (
-                  <div style={styles.emptyBox}>まだ車両がありません</div>
-                ) : (
-                  <div style={styles.cardList}>
-                    {sortedVehicles.map((v) => (
-                      <div key={v.id} style={styles.itemCard}>
-                        <div style={styles.itemMain}>
-                          <div style={styles.itemTitle}>{v.name}</div>
-                          <div style={styles.badge}>vehicle #{v.id}</div>
-                        </div>
-                        <button style={styles.buttonDanger} onClick={() => deleteVehicle(v.id)}>
-                          削除
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </Accordion>
-
-              <div style={styles.divider} />
-
-              <Accordion
-                title="地点一覧"
-                count={sortedLocations.length}
-                open={openLocations}
-                onToggle={() => setOpenLocations((v) => !v)}
-              >
-                {sortedLocations.length === 0 ? (
-                  <div style={styles.emptyBox}>まだ地点がありません</div>
-                ) : (
-                  <div style={styles.cardList}>
-                    {sortedLocations.map((loc) => (
-                      <div key={loc.id} style={styles.itemCard}>
-                        <div style={styles.itemMain}>
-                          <div style={styles.itemTitle}>{loc.name}</div>
-                          <div style={styles.badgeWrap}>
-                            <div style={styles.badge}>location #{loc.id}</div>
-                          </div>
-                        </div>
-                        <button style={styles.buttonDanger} onClick={() => deleteLocation(loc.id)}>
-                          削除
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </Accordion>
-
-              <div style={styles.divider} />
-
-              <Accordion
-                title="金額一覧"
-                count={fareView.length}
-                open={openFares}
-                onToggle={() => setOpenFares((v) => !v)}
-              >
-                {fareView.length === 0 ? (
-                  <div style={styles.emptyBox}>まだ区間運賃がありません</div>
-                ) : (
-                  <div style={styles.cardList}>
-                    {fareView.map((fare, idx) => (
-                      <div key={`${fare.from_id}-${fare.to_id}-${idx}`} style={styles.itemCard}>
-                        <div style={styles.itemMain}>
-                          <div style={styles.itemTitle}>
-                            {fare.fromName} → {fare.toName}
-                          </div>
-                          <div style={styles.badgeWrap}>
-                            <div style={styles.badge}>{fare.amount_yen}円</div>
-                            <div style={styles.badge}>
-                              {fare.from_id} → {fare.to_id}
-                            </div>
-                          </div>
-                        </div>
-                        <button
-                          style={styles.buttonDanger}
-                          onClick={() => deleteFare(fare.from_id, fare.to_id)}
-                        >
-                          削除
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </Accordion>
-            </section>
+  function renderSimpleList<T extends { id: number; name: string }>(
+    items: T[],
+    onDelete: (id: number) => void,
+    emptyText: string
+  ) {
+    if (items.length === 0) {
+      return (
+        <div style={{ ...styles.itemCard, opacity: 0.72 }}>
+          <div style={styles.itemMeta}>
+            <div style={styles.itemTitle}>{emptyText}</div>
           </div>
         </div>
-      </main>
-    </>
+      );
+    }
+
+    return items.map((item) => (
+      <div key={item.id} style={styles.itemCard}>
+        <div style={styles.itemMeta}>
+          <div style={styles.itemTitle}>{item.name}</div>
+          <div style={styles.itemSub}>ID: {item.id}</div>
+        </div>
+
+        <button style={styles.dangerBtn} onClick={() => onDelete(item.id)} type="button">
+          削除
+        </button>
+      </div>
+    ));
+  }
+
+  return (
+    <div style={styles.page}>
+      <div style={styles.container}>
+        <div style={styles.topbar}>
+          <h1 style={styles.title}>管理ページ</h1>
+          <Link href="/" style={styles.ghostLink}>
+            ← 入力ページへ
+          </Link>
+        </div>
+
+        <div style={styles.card}>
+          <h2 style={{ ...styles.sectionTitle, fontSize: 26, marginBottom: 18 }}>設定</h2>
+
+          <div style={styles.row}>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>パスワード</div>
+              <input
+                type="password"
+                value={adminKey}
+                onChange={(e) => setAdminKey(e.target.value)}
+                placeholder="ADMIN_KEY"
+                style={styles.input}
+              />
+            </div>
+
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button type="button" style={styles.secondaryBtn} onClick={reloadAll} disabled={loading}>
+                再読み込み
+              </button>
+            </div>
+
+            {!!statusText && <div style={styles.status}>{statusText}</div>}
+          </div>
+
+          <hr style={styles.hr} />
+
+          <div style={styles.row}>
+            <h3 style={styles.sectionTitle}>運転手を追加</h3>
+            <input
+              type="text"
+              value={driverName}
+              onChange={(e) => setDriverName(e.target.value)}
+              placeholder="運転手名"
+              style={styles.input}
+            />
+            <div>
+              <button type="button" style={styles.primaryBtn} onClick={handleAddDriver} disabled={loading}>
+                追加
+              </button>
+            </div>
+          </div>
+
+          <hr style={styles.hr} />
+
+          <div style={styles.row}>
+            <h3 style={styles.sectionTitle}>車両を追加</h3>
+            <input
+              type="text"
+              value={vehicleName}
+              onChange={(e) => setVehicleName(e.target.value)}
+              placeholder="車両名"
+              style={styles.input}
+            />
+            <div>
+              <button type="button" style={styles.primaryBtn} onClick={handleAddVehicle} disabled={loading}>
+                追加
+              </button>
+            </div>
+          </div>
+
+          <hr style={styles.hr} />
+
+          <div style={styles.row}>
+            <h3 style={styles.sectionTitle}>地点を追加</h3>
+            <input
+              type="text"
+              value={locationName}
+              onChange={(e) => setLocationName(e.target.value)}
+              placeholder="地点名"
+              style={styles.input}
+            />
+            <div>
+              <button type="button" style={styles.primaryBtn} onClick={handleAddLocation} disabled={loading}>
+                追加
+              </button>
+            </div>
+          </div>
+
+          <hr style={styles.hr} />
+
+          <div style={styles.row}>
+            <h3 style={styles.sectionTitle}>区間運賃を追加 / 更新</h3>
+
+            <select
+              value={fareFromId}
+              onChange={(e) => setFareFromId(e.target.value)}
+              style={styles.select}
+            >
+              <option value="">出発地を選択</option>
+              {locations.map((loc) => (
+                <option key={loc.id} value={loc.id}>
+                  {loc.name}
+                </option>
+              ))}
+            </select>
+
+            <select value={fareToId} onChange={(e) => setFareToId(e.target.value)} style={styles.select}>
+              <option value="">到着地を選択</option>
+              {locations.map((loc) => (
+                <option key={loc.id} value={loc.id}>
+                  {loc.name}
+                </option>
+              ))}
+            </select>
+
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={fareAmount}
+              onChange={(e) => setFareAmount(e.target.value)}
+              placeholder="金額（円）"
+              style={styles.input}
+            />
+
+            <div>
+              <button type="button" style={styles.primaryBtn} onClick={handleUpsertFare} disabled={loading}>
+                追加 / 更新
+              </button>
+            </div>
+          </div>
+
+          <hr style={styles.hr} />
+
+          <div style={styles.row}>
+            <h3 style={styles.sectionTitle}>区間距離を追加 / 更新</h3>
+
+            <select
+              value={distanceFromId}
+              onChange={(e) => setDistanceFromId(e.target.value)}
+              style={styles.select}
+            >
+              <option value="">出発地を選択</option>
+              {locations.map((loc) => (
+                <option key={loc.id} value={loc.id}>
+                  {loc.name}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={distanceToId}
+              onChange={(e) => setDistanceToId(e.target.value)}
+              style={styles.select}
+            >
+              <option value="">到着地を選択</option>
+              {locations.map((loc) => (
+                <option key={loc.id} value={loc.id}>
+                  {loc.name}
+                </option>
+              ))}
+            </select>
+
+            <input
+              type="number"
+              min="0"
+              step="0.1"
+              value={distanceKm}
+              onChange={(e) => setDistanceKm(e.target.value)}
+              placeholder="距離（km）"
+              style={styles.input}
+            />
+
+            <div>
+              <button
+                type="button"
+                style={styles.primaryBtn}
+                onClick={handleUpsertRouteDistance}
+                disabled={loading}
+              >
+                追加 / 更新
+              </button>
+            </div>
+
+            <div style={styles.helper}>
+              片方向だけ登録しても、入力ページ側では逆方向も同じ距離として扱う想定。
+            </div>
+          </div>
+
+          <hr style={styles.hr} />
+
+          <div style={{ display: "grid", gap: 12 }}>
+            <button
+              type="button"
+              style={styles.collapsibleBtn}
+              onClick={() => setDriversOpen((v) => !v)}
+            >
+              <span style={{ fontWeight: 800, fontSize: 18 }}>運転手一覧</span>
+              <span style={{ opacity: 0.72 }}>{driversOpen ? "閉じる" : "開く"}</span>
+            </button>
+            {driversOpen && (
+              <div style={{ display: "grid", gap: 10 }}>
+                {renderSimpleList(drivers, handleDeleteDriver, "まだ運転手はありません")}
+              </div>
+            )}
+
+            <button
+              type="button"
+              style={styles.collapsibleBtn}
+              onClick={() => setVehiclesOpen((v) => !v)}
+            >
+              <span style={{ fontWeight: 800, fontSize: 18 }}>車両一覧</span>
+              <span style={{ opacity: 0.72 }}>{vehiclesOpen ? "閉じる" : "開く"}</span>
+            </button>
+            {vehiclesOpen && (
+              <div style={{ display: "grid", gap: 10 }}>
+                {renderSimpleList(vehicles, handleDeleteVehicle, "まだ車両はありません")}
+              </div>
+            )}
+
+            <button
+              type="button"
+              style={styles.collapsibleBtn}
+              onClick={() => setLocationsOpen((v) => !v)}
+            >
+              <span style={{ fontWeight: 800, fontSize: 18 }}>地点一覧</span>
+              <span style={{ opacity: 0.72 }}>{locationsOpen ? "閉じる" : "開く"}</span>
+            </button>
+            {locationsOpen && (
+              <div style={{ display: "grid", gap: 10 }}>
+                {locations.length === 0 ? (
+                  <div style={{ ...styles.itemCard, opacity: 0.72 }}>
+                    <div style={styles.itemMeta}>
+                      <div style={styles.itemTitle}>まだ地点はありません</div>
+                    </div>
+                  </div>
+                ) : (
+                  locations.map((item) => (
+                    <div key={item.id} style={styles.itemCard}>
+                      <div style={styles.itemMeta}>
+                        <div style={styles.itemTitle}>{item.name}</div>
+                        <div style={styles.itemSub}>
+                          ID: {item.id}
+                          {item.kind ? ` / 種別: ${item.kind}` : ""}
+                        </div>
+                      </div>
+
+                      <button
+                        style={styles.dangerBtn}
+                        onClick={() => handleDeleteLocation(item.id)}
+                        type="button"
+                      >
+                        削除
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            <button
+              type="button"
+              style={styles.collapsibleBtn}
+              onClick={() => setFaresOpen((v) => !v)}
+            >
+              <span style={{ fontWeight: 800, fontSize: 18 }}>区間運賃一覧</span>
+              <span style={{ opacity: 0.72 }}>{faresOpen ? "閉じる" : "開く"}</span>
+            </button>
+            {faresOpen && (
+              <div style={{ display: "grid", gap: 10 }}>
+                {fares.length === 0 ? (
+                  <div style={{ ...styles.itemCard, opacity: 0.72 }}>
+                    <div style={styles.itemMeta}>
+                      <div style={styles.itemTitle}>まだ区間運賃はありません</div>
+                    </div>
+                  </div>
+                ) : (
+                  fares.map((row) => (
+                    <div key={row.id} style={styles.itemCard}>
+                      <div style={styles.itemMeta}>
+                        <div style={styles.itemTitle}>
+                          {locationNameMap.get(row.from_id) ?? row.from_id} →{" "}
+                          {locationNameMap.get(row.to_id) ?? row.to_id}
+                        </div>
+                        <div style={styles.itemSub}>
+                          {row.amount_yen} 円 / ID: {row.id}
+                        </div>
+                      </div>
+
+                      <button
+                        style={styles.dangerBtn}
+                        onClick={() => handleDeleteFare(row.id)}
+                        type="button"
+                      >
+                        削除
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            <button
+              type="button"
+              style={styles.collapsibleBtn}
+              onClick={() => setDistancesOpen((v) => !v)}
+            >
+              <span style={{ fontWeight: 800, fontSize: 18 }}>距離相場一覧</span>
+              <span style={{ opacity: 0.72 }}>{distancesOpen ? "閉じる" : "開く"}</span>
+            </button>
+            {distancesOpen && (
+              <div style={{ display: "grid", gap: 10 }}>
+                {routeDistances.length === 0 ? (
+                  <div style={{ ...styles.itemCard, opacity: 0.72 }}>
+                    <div style={styles.itemMeta}>
+                      <div style={styles.itemTitle}>まだ距離相場はありません</div>
+                    </div>
+                  </div>
+                ) : (
+                  routeDistances.map((row) => (
+                    <div key={row.id} style={styles.itemCard}>
+                      <div style={styles.itemMeta}>
+                        <div style={styles.itemTitle}>
+                          {row.from_location?.name ??
+                            locationNameMap.get(row.from_location_id) ??
+                            row.from_location_id}{" "}
+                          →{" "}
+                          {row.to_location?.name ??
+                            locationNameMap.get(row.to_location_id) ??
+                            row.to_location_id}
+                        </div>
+                        <div style={styles.itemSub}>
+                          {row.distance_km} km / ID: {row.id}
+                        </div>
+                      </div>
+
+                      <button
+                        style={styles.dangerBtn}
+                        onClick={() => handleDeleteRouteDistance(row.id)}
+                        type="button"
+                      >
+                        削除
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
