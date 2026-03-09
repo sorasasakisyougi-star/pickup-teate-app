@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 
 type DriverRow = {
   id: number;
@@ -39,6 +40,18 @@ type RouteDistanceRow = {
   } | null;
 };
 
+type SeedFare = {
+  from: string;
+  to: string;
+  amount_yen: number;
+};
+
+type SeedDistance = {
+  from: string;
+  to: string;
+  distance_km: number;
+};
+
 async function readJsonOrThrow(res: Response) {
   const text = await res.text();
 
@@ -68,22 +81,149 @@ function getErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
-const styles = {
+const SEED_LOCATIONS = [
+  "会社",
+  "真狩市街地",
+  "今井",
+  "ニセコ寮",
+  "京極",
+  "ふじ鮨",
+  "ヒルトン",
+  "リッツカールトン",
+  "五色",
+  "エムズ",
+  "倶知安",
+  "喜茂別",
+  "留寿都",
+  "蘭越",
+] as const;
+
+const SEED_FARES: SeedFare[] = [
+  { from: "会社", to: "真狩市街地", amount_yen: 100 },
+  { from: "会社", to: "今井", amount_yen: 200 },
+  { from: "会社", to: "ニセコ寮", amount_yen: 200 },
+  { from: "会社", to: "京極", amount_yen: 300 },
+  { from: "会社", to: "ふじ鮨", amount_yen: 600 },
+  { from: "会社", to: "ヒルトン", amount_yen: 600 },
+  { from: "会社", to: "リッツカールトン", amount_yen: 600 },
+  { from: "会社", to: "五色", amount_yen: 600 },
+  { from: "会社", to: "エムズ", amount_yen: 600 },
+  { from: "会社", to: "倶知安", amount_yen: 600 },
+  { from: "会社", to: "喜茂別", amount_yen: 500 },
+  { from: "会社", to: "留寿都", amount_yen: 300 },
+
+  { from: "真狩市街地", to: "真狩市街地", amount_yen: 100 },
+  { from: "真狩市街地", to: "今井", amount_yen: 200 },
+  { from: "真狩市街地", to: "ニセコ寮", amount_yen: 200 },
+  { from: "真狩市街地", to: "京極", amount_yen: 300 },
+  { from: "真狩市街地", to: "ふじ鮨", amount_yen: 600 },
+  { from: "真狩市街地", to: "ヒルトン", amount_yen: 600 },
+  { from: "真狩市街地", to: "リッツカールトン", amount_yen: 600 },
+  { from: "真狩市街地", to: "五色", amount_yen: 600 },
+  { from: "真狩市街地", to: "エムズ", amount_yen: 600 },
+  { from: "真狩市街地", to: "倶知安", amount_yen: 600 },
+  { from: "真狩市街地", to: "喜茂別", amount_yen: 400 },
+  { from: "真狩市街地", to: "留寿都", amount_yen: 200 },
+
+  { from: "今井", to: "今井", amount_yen: 200 },
+  { from: "今井", to: "ニセコ寮", amount_yen: 300 },
+  { from: "今井", to: "京極", amount_yen: 500 },
+  { from: "今井", to: "ふじ鮨", amount_yen: 600 },
+  { from: "今井", to: "ヒルトン", amount_yen: 600 },
+  { from: "今井", to: "リッツカールトン", amount_yen: 600 },
+  { from: "今井", to: "五色", amount_yen: 600 },
+  { from: "今井", to: "倶知安", amount_yen: 700 },
+  { from: "今井", to: "留寿都", amount_yen: 300 },
+
+  { from: "ニセコ寮", to: "京極", amount_yen: 500 },
+  { from: "ニセコ寮", to: "ふじ鮨", amount_yen: 400 },
+  { from: "ニセコ寮", to: "ヒルトン", amount_yen: 400 },
+  { from: "ニセコ寮", to: "リッツカールトン", amount_yen: 400 },
+  { from: "ニセコ寮", to: "五色", amount_yen: 400 },
+  { from: "ニセコ寮", to: "倶知安", amount_yen: 400 },
+  { from: "ニセコ寮", to: "喜茂別", amount_yen: 600 },
+  { from: "ニセコ寮", to: "留寿都", amount_yen: 400 },
+
+  { from: "京極", to: "京極", amount_yen: 100 },
+  { from: "京極", to: "ふじ鮨", amount_yen: 600 },
+  { from: "京極", to: "ヒルトン", amount_yen: 900 },
+  { from: "京極", to: "リッツカールトン", amount_yen: 900 },
+  { from: "京極", to: "五色", amount_yen: 900 },
+  { from: "京極", to: "倶知安", amount_yen: 600 },
+  { from: "京極", to: "喜茂別", amount_yen: 300 },
+  { from: "京極", to: "留寿都", amount_yen: 400 },
+
+  { from: "倶知安", to: "倶知安", amount_yen: 100 },
+  { from: "倶知安", to: "ふじ鮨", amount_yen: 300 },
+  { from: "倶知安", to: "ヒルトン", amount_yen: 600 },
+  { from: "倶知安", to: "リッツカールトン", amount_yen: 600 },
+  { from: "倶知安", to: "五色", amount_yen: 600 },
+  { from: "倶知安", to: "喜茂別", amount_yen: 800 },
+  { from: "倶知安", to: "留寿都", amount_yen: 1000 },
+
+  { from: "喜茂別", to: "留寿都", amount_yen: 300 },
+  { from: "喜茂別", to: "ふじ鮨", amount_yen: 1000 },
+  { from: "喜茂別", to: "ヒルトン", amount_yen: 1000 },
+  { from: "喜茂別", to: "リッツカールトン", amount_yen: 1000 },
+  { from: "喜茂別", to: "五色", amount_yen: 1000 },
+  { from: "喜茂別", to: "倶知安", amount_yen: 800 },
+
+  { from: "留寿都", to: "ふじ鮨", amount_yen: 800 },
+  { from: "留寿都", to: "ヒルトン", amount_yen: 800 },
+  { from: "留寿都", to: "リッツカールトン", amount_yen: 800 },
+  { from: "留寿都", to: "五色", amount_yen: 800 },
+  { from: "留寿都", to: "倶知安", amount_yen: 1000 },
+
+  { from: "蘭越", to: "会社", amount_yen: 800 },
+  { from: "蘭越", to: "真狩市街地", amount_yen: 800 },
+  { from: "蘭越", to: "今井", amount_yen: 900 },
+  { from: "蘭越", to: "ニセコ寮", amount_yen: 700 },
+  { from: "蘭越", to: "京極", amount_yen: 1200 },
+  { from: "蘭越", to: "ふじ鮨", amount_yen: 700 },
+  { from: "蘭越", to: "ヒルトン", amount_yen: 500 },
+  { from: "蘭越", to: "リッツカールトン", amount_yen: 500 },
+  { from: "蘭越", to: "五色", amount_yen: 500 },
+  { from: "蘭越", to: "倶知安", amount_yen: 900 },
+
+  { from: "ふじ鮨", to: "ヒルトン", amount_yen: 300 },
+  { from: "ふじ鮨", to: "リッツカールトン", amount_yen: 300 },
+  { from: "リッツカールトン", to: "五色", amount_yen: 100 },
+  { from: "リッツカールトン", to: "ヒルトン", amount_yen: 100 },
+];
+
+const SEED_DISTANCES: SeedDistance[] = [
+  { from: "会社", to: "真狩市街地", distance_km: 6 },
+  { from: "会社", to: "京極", distance_km: 19 },
+  { from: "会社", to: "喜茂別", distance_km: 27 },
+  { from: "会社", to: "留寿都", distance_km: 20 },
+  { from: "真狩市街地", to: "京極", distance_km: 15 },
+  { from: "真狩市街地", to: "喜茂別", distance_km: 18 },
+  { from: "真狩市街地", to: "留寿都", distance_km: 11 },
+  { from: "京極", to: "喜茂別", distance_km: 10 },
+  { from: "京極", to: "倶知安", distance_km: 17 },
+  { from: "喜茂別", to: "留寿都", distance_km: 8 },
+  { from: "真狩市街地", to: "倶知安", distance_km: 23 },
+  { from: "ふじ鮨", to: "ヒルトン", distance_km: 9 },
+  { from: "ふじ鮨", to: "リッツカールトン", distance_km: 9 },
+  { from: "リッツカールトン", to: "五色", distance_km: 2 },
+  { from: "リッツカールトン", to: "ヒルトン", distance_km: 2 },
+];
+
+const styles: Record<string, CSSProperties> = {
   page: {
     minHeight: "100vh",
+    width: "100%",
     background:
       "radial-gradient(circle at top, rgba(24,80,180,0.18), transparent 28%), linear-gradient(180deg, #020817 0%, #030712 100%)",
     color: "#fff",
     padding: "32px 16px 72px",
     fontFamily:
       'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  } as React.CSSProperties,
-
+  },
   container: {
     maxWidth: 980,
     margin: "0 auto",
-  } as React.CSSProperties,
-
+  },
   topbar: {
     display: "flex",
     alignItems: "center",
@@ -91,16 +231,14 @@ const styles = {
     gap: 16,
     marginBottom: 28,
     flexWrap: "wrap",
-  } as React.CSSProperties,
-
+  },
   title: {
     fontSize: 54,
     fontWeight: 800,
     letterSpacing: "-0.03em",
     margin: 0,
     lineHeight: 1.05,
-  } as React.CSSProperties,
-
+  },
   card: {
     border: "1px solid rgba(255,255,255,0.08)",
     background: "rgba(2, 6, 23, 0.78)",
@@ -108,14 +246,12 @@ const styles = {
     padding: 18,
     boxShadow: "0 16px 50px rgba(0,0,0,0.30)",
     backdropFilter: "blur(12px)",
-  } as React.CSSProperties,
-
+  },
   sectionTitle: {
     fontSize: 18,
     fontWeight: 800,
     margin: "0 0 14px",
-  } as React.CSSProperties,
-
+  },
   input: {
     width: "100%",
     borderRadius: 14,
@@ -125,9 +261,7 @@ const styles = {
     padding: "14px 14px",
     outline: "none",
     fontSize: 15,
-    boxSizing: "border-box",
-  } as React.CSSProperties,
-
+  },
   select: {
     width: "100%",
     borderRadius: 14,
@@ -137,20 +271,17 @@ const styles = {
     padding: "14px 14px",
     outline: "none",
     fontSize: 15,
-    boxSizing: "border-box",
-  } as React.CSSProperties,
-
+  },
   primaryBtn: {
     border: "1px solid rgba(99,102,241,0.55)",
-    background: "#1d4ed8",
+    background: "#2563eb",
     color: "#fff",
     borderRadius: 14,
     padding: "12px 18px",
     fontWeight: 800,
     fontSize: 14,
     cursor: "pointer",
-  } as React.CSSProperties,
-
+  },
   secondaryBtn: {
     border: "1px solid rgba(255,255,255,0.10)",
     background: "rgba(255,255,255,0.04)",
@@ -160,8 +291,17 @@ const styles = {
     fontWeight: 700,
     fontSize: 14,
     cursor: "pointer",
-  } as React.CSSProperties,
-
+  },
+  accentBtn: {
+    border: "1px solid rgba(56,189,248,0.5)",
+    background: "rgba(8, 47, 73, 0.95)",
+    color: "#dbeafe",
+    borderRadius: 14,
+    padding: "12px 18px",
+    fontWeight: 800,
+    fontSize: 14,
+    cursor: "pointer",
+  },
   dangerBtn: {
     border: "1px solid rgba(220,38,38,0.5)",
     background: "#b91c1c",
@@ -171,8 +311,7 @@ const styles = {
     fontWeight: 800,
     fontSize: 13,
     cursor: "pointer",
-  } as React.CSSProperties,
-
+  },
   ghostLink: {
     display: "inline-flex",
     alignItems: "center",
@@ -186,19 +325,16 @@ const styles = {
     textDecoration: "none",
     fontWeight: 800,
     whiteSpace: "nowrap",
-  } as React.CSSProperties,
-
+  },
   hr: {
     border: "none",
     borderTop: "1px solid rgba(255,255,255,0.08)",
     margin: "18px 0",
-  } as React.CSSProperties,
-
+  },
   row: {
     display: "grid",
     gap: 12,
-  } as React.CSSProperties,
-
+  },
   itemCard: {
     border: "1px solid rgba(255,255,255,0.08)",
     background: "rgba(255,255,255,0.03)",
@@ -209,26 +345,22 @@ const styles = {
     justifyContent: "space-between",
     gap: 12,
     flexWrap: "wrap",
-  } as React.CSSProperties,
-
+  },
   itemMeta: {
     display: "flex",
     flexDirection: "column",
     gap: 6,
-  } as React.CSSProperties,
-
+  },
   itemTitle: {
     fontSize: 16,
     fontWeight: 800,
     lineHeight: 1.3,
-  } as React.CSSProperties,
-
+  },
   itemSub: {
     fontSize: 13,
     opacity: 0.72,
     lineHeight: 1.4,
-  } as React.CSSProperties,
-
+  },
   collapsibleBtn: {
     width: "100%",
     borderRadius: 16,
@@ -236,26 +368,25 @@ const styles = {
     background: "rgba(255,255,255,0.04)",
     color: "#fff",
     padding: "14px 16px",
-    textAlign: "left" as const,
+    textAlign: "left",
     cursor: "pointer",
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
-  } as React.CSSProperties,
-
+  },
   helper: {
     fontSize: 12,
     opacity: 0.7,
     marginTop: 8,
     lineHeight: 1.5,
-  } as React.CSSProperties,
-
+  },
   status: {
     fontSize: 13,
     marginTop: 8,
     opacity: 0.82,
-  } as React.CSSProperties,
+    whiteSpace: "pre-wrap",
+  },
 };
 
 export default function AdminPage() {
@@ -289,10 +420,9 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    const saved = typeof window !== "undefined" ? localStorage.getItem("pickup_admin_key") : "";
-    if (saved) {
-      setAdminKey(saved);
-    }
+    if (typeof window === "undefined") return;
+    const saved = localStorage.getItem("pickup_admin_key") || "";
+    if (saved) setAdminKey(saved);
   }, []);
 
   useEffect(() => {
@@ -408,6 +538,81 @@ export default function AdminPage() {
     });
 
     return await readJsonOrThrow(res);
+  }
+
+  async function ensureLocationsSeeded() {
+    for (const name of SEED_LOCATIONS) {
+      await postJson("/api/admin/locations", { name });
+    }
+    await loadLocations(adminKey.trim());
+  }
+
+  async function handleSeedData() {
+    const ok = window.confirm(
+      "以前の地点・区間運賃・距離相場をまとめて入れます。続けますか？"
+    );
+    if (!ok) return;
+
+    try {
+      setLoading(true);
+      setStatusText("初期データ投入中…\n地点を作成しています…");
+
+      await ensureLocationsSeeded();
+
+      const latestLocationsRes = await fetch("/api/admin/locations", {
+        headers: { "x-admin-key": adminKey.trim() },
+      });
+      const latestLocationsJson = await readJsonOrThrow(latestLocationsRes);
+      const latestLocations = normalizeItems<LocationRow>(latestLocationsJson);
+
+      const nameToId = new Map<string, number>();
+      for (const loc of latestLocations) {
+        nameToId.set(loc.name, loc.id);
+      }
+
+      setStatusText("初期データ投入中…\n区間運賃を入れています…");
+
+      for (const row of SEED_FARES) {
+        const fromId = nameToId.get(row.from);
+        const toId = nameToId.get(row.to);
+        if (!fromId || !toId) continue;
+
+        await postJson("/api/admin/fares", {
+          from_id: fromId,
+          to_id: toId,
+          amount_yen: row.amount_yen,
+        });
+      }
+
+      setStatusText("初期データ投入中…\n距離相場を入れています…");
+
+      for (const row of SEED_DISTANCES) {
+        const fromId = nameToId.get(row.from);
+        const toId = nameToId.get(row.to);
+        if (!fromId || !toId) continue;
+
+        await postJson("/api/admin/route-distances", {
+          from_location_id: fromId,
+          to_location_id: toId,
+          distance_km: row.distance_km,
+        });
+      }
+
+      await Promise.all([
+        loadLocations(adminKey.trim()),
+        loadFares(adminKey.trim()),
+        loadRouteDistances(adminKey.trim()),
+      ]);
+
+      setStatusText("初期データを投入しました");
+      alert("初期データの投入が完了しました");
+    } catch (error) {
+      const msg = getErrorMessage(error, "初期データ投入に失敗しました");
+      setStatusText(msg);
+      alert(msg);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function handleAddDriver() {
@@ -707,6 +912,10 @@ export default function AdminPage() {
               <button type="button" style={styles.secondaryBtn} onClick={reloadAll} disabled={loading}>
                 再読み込み
               </button>
+
+              <button type="button" style={styles.accentBtn} onClick={handleSeedData} disabled={loading}>
+                以前のデータを投入
+              </button>
             </div>
 
             {!!statusText && <div style={styles.status}>{statusText}</div>}
@@ -771,11 +980,7 @@ export default function AdminPage() {
           <div style={styles.row}>
             <h3 style={styles.sectionTitle}>区間運賃を追加 / 更新</h3>
 
-            <select
-              value={fareFromId}
-              onChange={(e) => setFareFromId(e.target.value)}
-              style={styles.select}
-            >
+            <select value={fareFromId} onChange={(e) => setFareFromId(e.target.value)} style={styles.select}>
               <option value="">出発地を選択</option>
               {locations.map((loc) => (
                 <option key={loc.id} value={loc.id}>
@@ -870,11 +1075,7 @@ export default function AdminPage() {
           <hr style={styles.hr} />
 
           <div style={{ display: "grid", gap: 12 }}>
-            <button
-              type="button"
-              style={styles.collapsibleBtn}
-              onClick={() => setDriversOpen((v) => !v)}
-            >
+            <button type="button" style={styles.collapsibleBtn} onClick={() => setDriversOpen((v) => !v)}>
               <span style={{ fontWeight: 800, fontSize: 18 }}>運転手一覧</span>
               <span style={{ opacity: 0.72 }}>{driversOpen ? "閉じる" : "開く"}</span>
             </button>
@@ -884,11 +1085,7 @@ export default function AdminPage() {
               </div>
             )}
 
-            <button
-              type="button"
-              style={styles.collapsibleBtn}
-              onClick={() => setVehiclesOpen((v) => !v)}
-            >
+            <button type="button" style={styles.collapsibleBtn} onClick={() => setVehiclesOpen((v) => !v)}>
               <span style={{ fontWeight: 800, fontSize: 18 }}>車両一覧</span>
               <span style={{ opacity: 0.72 }}>{vehiclesOpen ? "閉じる" : "開く"}</span>
             </button>
@@ -898,11 +1095,7 @@ export default function AdminPage() {
               </div>
             )}
 
-            <button
-              type="button"
-              style={styles.collapsibleBtn}
-              onClick={() => setLocationsOpen((v) => !v)}
-            >
+            <button type="button" style={styles.collapsibleBtn} onClick={() => setLocationsOpen((v) => !v)}>
               <span style={{ fontWeight: 800, fontSize: 18 }}>地点一覧</span>
               <span style={{ opacity: 0.72 }}>{locationsOpen ? "閉じる" : "開く"}</span>
             </button>
@@ -925,11 +1118,7 @@ export default function AdminPage() {
                         </div>
                       </div>
 
-                      <button
-                        style={styles.dangerBtn}
-                        onClick={() => handleDeleteLocation(item.id)}
-                        type="button"
-                      >
+                      <button style={styles.dangerBtn} onClick={() => handleDeleteLocation(item.id)} type="button">
                         削除
                       </button>
                     </div>
@@ -938,11 +1127,7 @@ export default function AdminPage() {
               </div>
             )}
 
-            <button
-              type="button"
-              style={styles.collapsibleBtn}
-              onClick={() => setFaresOpen((v) => !v)}
-            >
+            <button type="button" style={styles.collapsibleBtn} onClick={() => setFaresOpen((v) => !v)}>
               <span style={{ fontWeight: 800, fontSize: 18 }}>区間運賃一覧</span>
               <span style={{ opacity: 0.72 }}>{faresOpen ? "閉じる" : "開く"}</span>
             </button>
@@ -967,11 +1152,7 @@ export default function AdminPage() {
                         </div>
                       </div>
 
-                      <button
-                        style={styles.dangerBtn}
-                        onClick={() => handleDeleteFare(row.id)}
-                        type="button"
-                      >
+                      <button style={styles.dangerBtn} onClick={() => handleDeleteFare(row.id)} type="button">
                         削除
                       </button>
                     </div>
@@ -980,11 +1161,7 @@ export default function AdminPage() {
               </div>
             )}
 
-            <button
-              type="button"
-              style={styles.collapsibleBtn}
-              onClick={() => setDistancesOpen((v) => !v)}
-            >
+            <button type="button" style={styles.collapsibleBtn} onClick={() => setDistancesOpen((v) => !v)}>
               <span style={{ fontWeight: 800, fontSize: 18 }}>距離相場一覧</span>
               <span style={{ opacity: 0.72 }}>{distancesOpen ? "閉じる" : "開く"}</span>
             </button>
