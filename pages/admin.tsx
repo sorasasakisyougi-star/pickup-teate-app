@@ -909,16 +909,17 @@ export default function AdminPage() {
             </div>
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button type="button" style={styles.secondaryBtn} onClick={reloadAll} disabled={loading}>
-                再読み込み
-              </button>
+  <button
+    type="button"
+    style={styles.secondaryBtn}
+    onClick={reloadAll}
+    disabled={loading}
+  >
+    再読み込み
+  </button>
+</div>
 
-            
-              </button>
-            </div>
-
-            {!!statusText && <div style={styles.status}>{statusText}</div>}
-          </div>
+{!!statusText && <div style={styles.status}>{statusText}</div>}          </div>
 
           <hr style={styles.hr} />
 
