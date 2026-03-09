@@ -78,7 +78,7 @@ page: {
   background:
     "radial-gradient(circle at top, rgba(24,80,180,0.18), transparent 28%), linear-gradient(180deg, #020817 0%, #030712 100%)",
   color: "#fff",
-  padding: "12px 10px 40px",
+  padding: "10px 8px 36px",
   fontFamily:
     'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
 },
@@ -98,15 +98,14 @@ page: {
   },
 
   title: {
-    margin: 0,
-    fontSize: "clamp(34px, 11vw, 62px)",
-    fontWeight: 900,
-    letterSpacing: "-0.05em",
-    lineHeight: 1.02,
-    textAlign: "left",
-    wordBreak: "keep-all",
-  },
-
+  margin: 0,
+  fontSize: "clamp(32px, 10vw, 56px)",
+  fontWeight: 900,
+  letterSpacing: "-0.05em",
+  lineHeight: 1.02,
+  textAlign: "left",
+  wordBreak: "keep-all",
+},
   backWrap: {
     display: "flex",
     justifyContent: "flex-start",
