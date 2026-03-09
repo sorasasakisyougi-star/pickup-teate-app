@@ -730,7 +730,7 @@ export default function Page() {
         vehicle_name: vehicleName || null,
         is_bus: mode === "bus",
         from_id: mode === "bus" ? null : fromId,
-        to_id: mode === "bus" ? null : (finalArrival?.locationId ?? null),
+        to_id: mode === "bus" ? null : finalArrival?.locationId ?? null,
         amount_yen: amountToSave,
         report_at: reportAtIso,
         depart_odometer_km: departOdo,
@@ -820,35 +820,35 @@ export default function Page() {
   }
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top,rgba(24,80,180,0.18),transparent_28%),linear-gradient(180deg,#020817_0%,#030712_100%)] text-white px-4 py-8">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,rgba(24,80,180,0.18),transparent_28%),linear-gradient(180deg,#020817_0%,#030712_100%)] text-white px-4 py-6 sm:px-6 sm:py-8">
       <div className="mx-auto w-full max-w-4xl">
-        <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-[220px] flex-1">
-            <h1 className="mb-1 text-center text-3xl font-extrabold tracking-[-0.03em] sm:text-4xl">
+        <div className="mb-8 flex items-start justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <h1 className="break-keep text-center text-5xl font-extrabold tracking-[-0.05em] leading-[1.05] sm:text-6xl">
               ピックアップ手当
             </h1>
-            <p className="text-center text-sm text-white/60">
+            <p className="mx-auto mt-4 max-w-xl text-center text-lg leading-8 text-white/55 sm:text-2xl">
               通常ルートは料金表参照 / バスは一律2,000円
             </p>
           </div>
 
           <Link
             href="/admin"
-            className="inline-flex min-h-[46px] items-center justify-center rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold text-white transition hover:bg-white/10"
+            className="shrink-0 rounded-[20px] border border-white/10 bg-white/5 px-5 py-4 text-lg font-bold text-white transition hover:bg-white/10 sm:px-6"
           >
             管理ページへ
           </Link>
         </div>
 
-        <div className="rounded-[24px] border border-white/10 bg-[rgba(2,6,23,0.78)] p-4 shadow-[0_16px_50px_rgba(0,0,0,0.30)] backdrop-blur-[12px] sm:p-6">
+        <div className="rounded-[30px] border border-white/10 bg-[rgba(2,6,23,0.78)] p-5 shadow-[0_16px_50px_rgba(0,0,0,0.30)] backdrop-blur-[12px] sm:p-7">
           {/* 運転者 */}
-          <div className="mb-4 grid grid-cols-[78px_1fr] items-start gap-3 sm:grid-cols-[90px_1fr]">
-            <div className="mt-2 text-sm text-white/70">運転者</div>
-            <div className="space-y-2">
+          <div className="mb-5 grid grid-cols-[96px_1fr] items-start gap-4 sm:grid-cols-[120px_1fr]">
+            <div className="pt-3 text-2xl text-white/65">運転者</div>
+            <div className="space-y-3">
               <select
                 value={driverName}
                 onChange={(e) => setDriverName(e.target.value)}
-                className="w-full rounded-[14px] border border-white/10 bg-black/20 px-3 py-3 text-sm text-white outline-none"
+                className="min-h-[64px] w-full rounded-[24px] border border-white/10 bg-black/20 px-6 text-2xl text-white outline-none"
               >
                 <option value="">選択</option>
                 {drivers.map((d) => (
@@ -858,20 +858,20 @@ export default function Page() {
                 ))}
               </select>
 
-              <div className="flex items-center justify-end">
-                <span className="text-xs text-white/40">{drivers.length}人</span>
+              <div className="flex justify-end">
+                <span className="text-xl text-white/35">{drivers.length}人</span>
               </div>
             </div>
           </div>
 
           {/* 車両 */}
-          <div className="mb-4 grid grid-cols-[78px_1fr] items-start gap-3 sm:grid-cols-[90px_1fr]">
-            <div className="mt-2 text-sm text-white/70">車両</div>
-            <div className="space-y-2">
+          <div className="mb-5 grid grid-cols-[96px_1fr] items-start gap-4 sm:grid-cols-[120px_1fr]">
+            <div className="pt-3 text-2xl text-white/65">車両</div>
+            <div className="space-y-3">
               <select
                 value={vehicleName}
                 onChange={(e) => setVehicleName(e.target.value)}
-                className="w-full rounded-[14px] border border-white/10 bg-black/20 px-3 py-3 text-sm text-white outline-none"
+                className="min-h-[64px] w-full rounded-[24px] border border-white/10 bg-black/20 px-6 text-2xl text-white outline-none"
               >
                 <option value="">選択</option>
                 {vehicles.map((v) => (
@@ -881,20 +881,20 @@ export default function Page() {
                 ))}
               </select>
 
-              <div className="flex items-center justify-end">
-                <span className="text-xs text-white/40">{vehicles.length}台</span>
+              <div className="flex justify-end">
+                <span className="text-xl text-white/35">{vehicles.length}台</span>
               </div>
             </div>
           </div>
 
           {/* モード */}
-          <div className="mb-5 grid grid-cols-2 gap-2">
+          <div className="mb-6 grid grid-cols-2 gap-4">
             <button
               type="button"
               onClick={() => setMode("route")}
-              className={`rounded-[14px] border px-3 py-3 text-sm font-bold transition ${
+              className={`min-h-[78px] rounded-[24px] border text-2xl font-bold transition ${
                 mode === "route"
-                  ? "border-blue-400/40 bg-blue-900/60 text-white"
+                  ? "border-blue-400/35 bg-[#20357b] text-white"
                   : "border-white/10 bg-white/5 text-white hover:bg-white/10"
               }`}
             >
@@ -903,9 +903,9 @@ export default function Page() {
             <button
               type="button"
               onClick={() => setMode("bus")}
-              className={`rounded-[14px] border px-3 py-3 text-sm font-bold transition ${
+              className={`min-h-[78px] rounded-[24px] border text-2xl font-bold transition ${
                 mode === "bus"
-                  ? "border-blue-400/40 bg-blue-900/60 text-white"
+                  ? "border-blue-400/35 bg-[#20357b] text-white"
                   : "border-white/10 bg-white/5 text-white hover:bg-white/10"
               }`}
             >
@@ -914,12 +914,12 @@ export default function Page() {
           </div>
 
           {/* 上部フォーム */}
-          <div className="mb-4 grid grid-cols-[78px_1fr] items-start gap-3 sm:grid-cols-[90px_1fr]">
-            <div className="mt-2 text-sm text-white/70">出発地</div>
+          <div className="grid grid-cols-[96px_1fr] items-start gap-x-4 gap-y-5 sm:grid-cols-[120px_1fr]">
+            <div className="pt-3 text-2xl text-white/65">出発地</div>
             <select
               value={fromId ?? ""}
               onChange={(e) => setFromId(e.target.value ? Number(e.target.value) : null)}
-              className="w-full rounded-[14px] border border-white/10 bg-black/20 px-3 py-3 text-sm text-white outline-none disabled:opacity-50"
+              className="min-h-[64px] w-full rounded-[24px] border border-white/10 bg-black/20 px-6 text-2xl text-white outline-none disabled:opacity-50"
               disabled={mode === "bus"}
             >
               <option value="">選択</option>
@@ -930,13 +930,13 @@ export default function Page() {
               ))}
             </select>
 
-            <div className="mt-2 text-sm text-white/70">到着数</div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="pt-3 text-2xl text-white/65">到着数</div>
+            <div className="flex flex-wrap items-center gap-4">
               <button
                 type="button"
                 onClick={addArrival}
                 disabled={arrivalCount >= MAX_ARRIVALS}
-                className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold transition hover:bg-white/10 disabled:opacity-50"
+                className="min-h-[64px] rounded-[22px] border border-white/10 bg-white/5 px-6 text-2xl font-bold transition hover:bg-white/10 disabled:opacity-50"
               >
                 ＋ 到着を追加
               </button>
@@ -944,35 +944,35 @@ export default function Page() {
                 type="button"
                 onClick={removeLastArrival}
                 disabled={arrivalCount <= 1}
-                className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold transition hover:bg-white/10 disabled:opacity-50"
+                className="min-h-[64px] rounded-[22px] border border-white/10 bg-white/5 px-6 text-2xl font-bold transition hover:bg-white/10 disabled:opacity-50"
               >
                 － 最後の到着を削除
               </button>
-              <span className="text-xs text-white/50">最大{MAX_ARRIVALS}個</span>
+              <span className="text-2xl text-white/40">最大{MAX_ARRIVALS}個</span>
             </div>
 
-            <div className="mt-2 text-sm text-white/70">ルート</div>
-            <div className="w-full break-all rounded-[14px] border border-white/10 bg-black/20 px-3 py-3 text-sm">
+            <div className="pt-3 text-2xl text-white/65">ルート</div>
+            <div className="min-h-[64px] w-full break-all rounded-[24px] border border-white/10 bg-black/20 px-6 py-4 text-2xl">
               {routeChain || "—"}
             </div>
 
-            <div className="mt-2 text-sm text-white/70">金額</div>
-            <div className="w-full rounded-[14px] border border-white/10 bg-black/20 px-3 py-3 text-sm">
+            <div className="pt-3 text-2xl text-white/65">金額</div>
+            <div className="min-h-[64px] w-full rounded-[24px] border border-white/10 bg-black/20 px-6 py-4 text-2xl">
               {mode === "bus" ? (
                 <span className="font-bold">2000円</span>
               ) : computedAmountYen != null ? (
                 <span className="font-bold">{computedAmountYen.toLocaleString()}円</span>
               ) : (
-                <span className="text-white/60">—</span>
+                <span className="text-white/50">—</span>
               )}
             </div>
 
-            <div className="mt-2 text-sm text-white/70">報告時間</div>
-            <div className="w-full rounded-[14px] border border-white/10 bg-black/20 px-3 py-3 text-sm">
+            <div className="pt-3 text-2xl text-white/65">報告時間</div>
+            <div className="min-h-[64px] w-full rounded-[24px] border border-white/10 bg-black/20 px-6 py-4 text-2xl">
               {formatReportTimeJa(now)}
             </div>
 
-            <div className="mt-2 text-sm text-white/70">ODO(出発)</div>
+            <div className="pt-3 text-2xl text-white/65">ODO(出発)</div>
             <div>
               <input
                 value={departOdo == null ? "" : String(departOdo)}
@@ -981,11 +981,11 @@ export default function Page() {
                   setDepartOdo(v === "" ? null : Number(v));
                 }}
                 placeholder="例: １１２６０３（全角OK）"
-                className="w-full rounded-[14px] border border-white/10 bg-black/20 px-3 py-3 text-sm text-white outline-none placeholder:text-white/35"
+                className="min-h-[64px] w-full rounded-[24px] border border-white/10 bg-black/20 px-6 text-2xl text-white outline-none placeholder:text-white/30"
               />
             </div>
 
-            <div className="mt-2 text-sm text-white/70">写真(出発)</div>
+            <div className="pt-3 text-2xl text-white/65">写真(出発)</div>
             <div>
               <input
                 ref={departFileRef}
@@ -998,24 +998,24 @@ export default function Page() {
                   e.currentTarget.value = "";
                 }}
               />
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-4">
                 <button
                   type="button"
                   onClick={() => departFileRef.current?.click()}
-                  className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-bold transition hover:bg-white/10"
+                  className="min-h-[58px] rounded-[20px] border border-white/10 bg-white/5 px-5 text-xl font-bold transition hover:bg-white/10"
                 >
                   写真を選ぶ
                 </button>
-                <span className="text-sm text-white/70">
+                <span className="text-xl text-white/65">
                   {departPhoto ? departPhoto.name : "未選択"}
                 </span>
               </div>
               {departPreview ? (
-                <div className="mt-3">
+                <div className="mt-4">
                   <img
                     src={departPreview}
                     alt="depart preview"
-                    className="max-h-40 rounded-xl border border-white/10"
+                    className="max-h-52 rounded-[20px] border border-white/10"
                   />
                 </div>
               ) : null}
@@ -1023,7 +1023,7 @@ export default function Page() {
           </div>
 
           {/* 到着1〜8 */}
-          <div className="mt-6 space-y-4">
+          <div className="mt-7 space-y-5">
             {visibleArrivals.map((a, idx) => {
               const segText =
                 typeof segmentDistances[idx] === "number" ? `${segmentDistances[idx]} km` : "—";
@@ -1031,14 +1031,14 @@ export default function Page() {
               return (
                 <div
                   key={`arrival-${idx}`}
-                  className="rounded-[20px] border border-white/10 bg-[rgba(255,255,255,0.03)] p-4"
+                  className="rounded-[26px] border border-white/10 bg-[rgba(255,255,255,0.03)] p-5"
                 >
-                  <div className="mb-3 text-base font-extrabold tracking-[-0.02em]">
+                  <div className="mb-4 text-3xl font-extrabold tracking-[-0.03em]">
                     到着{idx + 1}
                   </div>
 
-                  <div className="grid grid-cols-[78px_1fr] items-start gap-3 sm:grid-cols-[90px_1fr]">
-                    <div className="mt-2 text-sm text-white/70">場所</div>
+                  <div className="grid grid-cols-[96px_1fr] items-start gap-x-4 gap-y-5 sm:grid-cols-[120px_1fr]">
+                    <div className="pt-3 text-2xl text-white/65">場所</div>
                     <select
                       value={a.locationId ?? ""}
                       onChange={(e) =>
@@ -1046,7 +1046,7 @@ export default function Page() {
                           locationId: e.target.value ? Number(e.target.value) : null,
                         })
                       }
-                      className="w-full rounded-[14px] border border-white/10 bg-black/20 px-3 py-3 text-sm text-white outline-none disabled:opacity-50"
+                      className="min-h-[64px] w-full rounded-[24px] border border-white/10 bg-black/20 px-6 text-2xl text-white outline-none disabled:opacity-50"
                       disabled={mode === "bus"}
                     >
                       <option value="">選択</option>
@@ -1057,7 +1057,7 @@ export default function Page() {
                       ))}
                     </select>
 
-                    <div className="mt-2 text-sm text-white/70">ODO</div>
+                    <div className="pt-3 text-2xl text-white/65">ODO</div>
                     <div>
                       <input
                         value={a.odo == null ? "" : String(a.odo)}
@@ -1066,16 +1066,16 @@ export default function Page() {
                           updateArrival(idx, { odo: v === "" ? null : Number(v) });
                         }}
                         placeholder={`例: １１２８５０（到着${idx + 1} / 全角OK）`}
-                        className="w-full rounded-[14px] border border-white/10 bg-black/20 px-3 py-3 text-sm text-white outline-none placeholder:text-white/35"
+                        className="min-h-[64px] w-full rounded-[24px] border border-white/10 bg-black/20 px-6 text-2xl text-white outline-none placeholder:text-white/30"
                       />
                     </div>
 
-                    <div className="mt-2 text-sm text-white/70">区間距離</div>
-                    <div className="w-full rounded-[14px] border border-white/10 bg-black/20 px-3 py-3 text-sm">
+                    <div className="pt-3 text-2xl text-white/65">区間距離</div>
+                    <div className="min-h-[64px] w-full rounded-[24px] border border-white/10 bg-black/20 px-6 py-4 text-2xl">
                       {idx === 0 ? `始→到着1: ${segText}` : `到着${idx}→到着${idx + 1}: ${segText}`}
                     </div>
 
-                    <div className="mt-2 text-sm text-white/70">写真</div>
+                    <div className="pt-3 text-2xl text-white/65">写真</div>
                     <div>
                       <input
                         ref={(el) => {
@@ -1110,24 +1110,24 @@ export default function Page() {
                           e.currentTarget.value = "";
                         }}
                       />
-                      <div className="flex items-center gap-3">
+                      <div className="flex flex-wrap items-center gap-4">
                         <button
                           type="button"
                           onClick={() => arrivalFileRefs.current[idx]?.click()}
-                          className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-bold transition hover:bg-white/10"
+                          className="min-h-[58px] rounded-[20px] border border-white/10 bg-white/5 px-5 text-xl font-bold transition hover:bg-white/10"
                         >
                           写真を選ぶ
                         </button>
-                        <span className="text-sm text-white/70">
+                        <span className="text-xl text-white/65">
                           {a.photoFile ? a.photoFile.name : "未選択"}
                         </span>
                       </div>
                       {a.photoPreview ? (
-                        <div className="mt-3">
+                        <div className="mt-4">
                           <img
                             src={a.photoPreview}
                             alt={`arrival-${idx + 1}-preview`}
-                            className="max-h-40 rounded-xl border border-white/10"
+                            className="max-h-52 rounded-[20px] border border-white/10"
                           />
                         </div>
                       ) : null}
@@ -1139,33 +1139,33 @@ export default function Page() {
           </div>
 
           {/* 下部 */}
-          <div className="mt-6 grid grid-cols-[78px_1fr] items-start gap-3 sm:grid-cols-[90px_1fr]">
-            <div className="mt-2 text-sm text-white/70">総走行距離</div>
-            <div className="w-full rounded-[14px] border border-white/10 bg-black/20 px-3 py-3 text-sm">
+          <div className="mt-7 grid grid-cols-[96px_1fr] items-start gap-x-4 gap-y-5 sm:grid-cols-[120px_1fr]">
+            <div className="pt-3 text-2xl text-white/65">総走行距離</div>
+            <div className="min-h-[64px] w-full rounded-[24px] border border-white/10 bg-black/20 px-6 py-4 text-2xl">
               <span className="font-bold">
                 {typeof totalDistanceKm === "number" ? `${totalDistanceKm} km` : "—"}
               </span>
             </div>
 
-            <div className="mt-2 text-sm text-white/70">備考</div>
+            <div className="pt-3 text-2xl text-white/65">備考</div>
             <input
               value={note}
               onChange={(e) => setNote(e.target.value)}
               placeholder="任意"
-              className="w-full rounded-[14px] border border-white/10 bg-black/20 px-3 py-3 text-sm text-white outline-none placeholder:text-white/35"
+              className="min-h-[64px] w-full rounded-[24px] border border-white/10 bg-black/20 px-6 text-2xl text-white outline-none placeholder:text-white/30"
             />
           </div>
 
-          {loadErr ? <div className="mt-4 text-xs text-white/60">{loadErr}</div> : null}
+          {loadErr ? <div className="mt-5 text-lg text-white/60">{loadErr}</div> : null}
           {status ? (
-            <div className="mt-4 whitespace-pre-wrap text-sm text-white/75">{status}</div>
+            <div className="mt-5 whitespace-pre-wrap text-xl text-white/75">{status}</div>
           ) : null}
 
           <button
             type="button"
             onClick={onSave}
             disabled={!canSave}
-            className="mt-5 w-full rounded-[16px] border border-blue-400/30 bg-blue-900/65 px-3 py-3 text-base font-extrabold text-white transition hover:bg-blue-900/80 disabled:opacity-50"
+            className="mt-6 min-h-[72px] w-full rounded-[24px] border border-blue-400/30 bg-[#20357b] text-2xl font-extrabold text-white transition hover:bg-[#26418f] disabled:opacity-50"
             title={!canSave ? "備考以外に未入力があると保存できません" : ""}
           >
             {isSaving ? "保存中..." : "保存"}
