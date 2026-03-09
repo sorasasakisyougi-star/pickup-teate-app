@@ -63,7 +63,7 @@ type FlowPayload = {
   "距離（始）〜到着１": number | "";
   "距離（到着１〜到着２）": number | "";
   "距離（到着２〜到着３）": number | "";
-  "距離（距離３〜到着４）": number | "";
+  "距離（到着３〜到着４）": number | "";
   "距離（到着４〜到着５）": number | "";
   "距離（到着５〜到着６）": number | "";
   "距離（到着６〜到着７）": number | "";
@@ -73,6 +73,7 @@ type FlowPayload = {
   "想定距離（km）": number | "";
   "超過距離（km）": number | "";
   距離警告: string;
+  区間警告詳細: string;
 
   備考: string;
 
@@ -486,26 +487,32 @@ export default function Page() {
     return sum;
   }, [mode, fromId, arrivals, arrivalCount, fares]);
 
-  const expectedDistanceKm = useMemo(() => {
-    if (mode === "bus") return "";
-    if (fromId == null) return "";
+  const expectedSegmentDistances = useMemo(() => {
+    const result: Array<number | ""> = Array(MAX_ARRIVALS).fill("");
+
+    if (mode === "bus") return result;
+    if (fromId == null) return result;
 
     let cur = fromId;
-    let sum = 0;
 
     for (let i = 0; i < arrivalCount; i++) {
       const next = arrivals[i].locationId;
-      if (next == null) return "";
+      if (next == null) {
+        result[i] = "";
+        break;
+      }
 
       const km = getRouteDistanceKm(cur, next, routeDistances);
-      if (km == null) return "";
-
-      sum += km;
+      result[i] = typeof km === "number" ? km : "";
       cur = next;
     }
 
-    return sum;
+    return result;
   }, [mode, fromId, arrivals, arrivalCount, routeDistances]);
+
+  const expectedDistanceKm = useMemo(() => {
+    return sumSegs(expectedSegmentDistances);
+  }, [expectedSegmentDistances]);
 
   const segmentDistances = useMemo(() => {
     const s1 = calcSeg(departOdo, arrivals[0]?.odo ?? null);
@@ -519,6 +526,26 @@ export default function Page() {
     return [s1, s2, s3, s4, s5, s6, s7, s8] as const;
   }, [departOdo, arrivals]);
 
+  const segmentOverDistances = useMemo(() => {
+    return segmentDistances.map((actual, idx) => {
+      const expected = expectedSegmentDistances[idx];
+
+      if (typeof actual !== "number") return "";
+      if (typeof expected !== "number") return "";
+
+      const diff = actual - expected;
+      if (!Number.isFinite(diff)) return "";
+      return diff > 0 ? diff : 0;
+    }) as Array<number | "">;
+  }, [segmentDistances, expectedSegmentDistances]);
+
+  const segmentAlerts = useMemo(() => {
+    return segmentOverDistances.map((v) => {
+      if (typeof v !== "number") return "";
+      return v > DISTANCE_ALERT_THRESHOLD_KM ? "要確認" : "";
+    });
+  }, [segmentOverDistances]);
+
   const totalDistanceKm = useMemo(() => sumSegs([...segmentDistances]), [segmentDistances]);
 
   const overDistanceKm = useMemo(() => {
@@ -531,9 +558,37 @@ export default function Page() {
   }, [totalDistanceKm, expectedDistanceKm]);
 
   const distanceAlert = useMemo(() => {
-    if (typeof overDistanceKm !== "number") return "";
-    return overDistanceKm > DISTANCE_ALERT_THRESHOLD_KM ? "要確認" : "";
-  }, [overDistanceKm]);
+    return segmentAlerts.some((x) => x === "要確認") ? "要確認" : "";
+  }, [segmentAlerts]);
+
+  const segmentAlertDetail = useMemo(() => {
+    const messages: string[] = [];
+
+    for (let i = 0; i < arrivalCount; i++) {
+      const alert = segmentAlerts[i];
+      const actual = segmentDistances[i];
+      const expected = expectedSegmentDistances[i];
+      const over = segmentOverDistances[i];
+
+      if (alert !== "要確認") continue;
+      if (
+        typeof actual !== "number" ||
+        typeof expected !== "number" ||
+        typeof over !== "number"
+      ) {
+        continue;
+      }
+
+      const label =
+        i === 0 ? "始→到着1" : `到着${i}→到着${i + 1}`;
+
+      messages.push(
+        `${label}: 実${actual}km / 想定${expected}km / 超過${over}km`
+      );
+    }
+
+    return messages.join(" | ");
+  }, [arrivalCount, segmentAlerts, segmentDistances, expectedSegmentDistances, segmentOverDistances]);
 
   const distanceInvalid = useMemo(() => {
     for (let i = 0; i < arrivalCount; i++) {
@@ -816,7 +871,7 @@ export default function Page() {
         "距離（始）〜到着１": asCell(s1) as number | "",
         "距離（到着１〜到着２）": asCell(s2) as number | "",
         "距離（到着２〜到着３）": asCell(s3) as number | "",
-        "距離（距離３〜到着４）": asCell(s4) as number | "",
+        "距離（到着３〜到着４）": asCell(s4) as number | "",
         "距離（到着４〜到着５）": asCell(s5) as number | "",
         "距離（到着５〜到着６）": asCell(s6) as number | "",
         "距離（到着６〜到着７）": asCell(s7) as number | "",
@@ -826,6 +881,7 @@ export default function Page() {
         "想定距離（km）": asCell(expectedDistanceKm) as number | "",
         "超過距離（km）": asCell(overDistanceKm) as number | "",
         距離警告: distanceAlert,
+        区間警告詳細: segmentAlertDetail,
 
         備考: note.trim(),
 
@@ -1071,6 +1127,18 @@ export default function Page() {
               const segText =
                 typeof segmentDistances[idx] === "number" ? `${segmentDistances[idx]} km` : "—";
 
+              const expectedSegText =
+                typeof expectedSegmentDistances[idx] === "number"
+                  ? `${expectedSegmentDistances[idx]} km`
+                  : "—";
+
+              const overSegText =
+                typeof segmentOverDistances[idx] === "number"
+                  ? `${segmentOverDistances[idx]} km`
+                  : "—";
+
+              const isSegmentAlert = segmentAlerts[idx] === "要確認";
+
               return (
                 <div
                   key={`arrival-${idx}`}
@@ -1112,8 +1180,22 @@ export default function Page() {
                     />
 
                     <div className="pt-3 text-xl text-white/65 sm:text-2xl">区間距離</div>
-                    <div className="min-h-[58px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 py-3 text-xl sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:py-4 sm:text-2xl">
-                      {idx === 0 ? `始→到着1: ${segText}` : `到着${idx}→到着${idx + 1}: ${segText}`}
+                    <div
+                      className={`min-h-[58px] w-full rounded-[18px] border px-4 py-3 text-xl sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:py-4 sm:text-2xl ${
+                        isSegmentAlert
+                          ? "border-red-500/40 bg-red-950/25 text-red-400"
+                          : "border-white/10 bg-black/20 text-white"
+                      }`}
+                    >
+                      <div className="font-bold">
+                        {idx === 0 ? `始→到着1: ${segText}` : `到着${idx}→到着${idx + 1}: ${segText}`}
+                      </div>
+                      <div className="mt-1 text-sm sm:text-lg">
+                        想定 {expectedSegText} / 超過 {overSegText}
+                      </div>
+                      {isSegmentAlert ? (
+                        <div className="mt-1 text-sm font-bold sm:text-lg">要確認</div>
+                      ) : null}
                     </div>
 
                     <div className="pt-3 text-xl text-white/65 sm:text-2xl">写真</div>
@@ -1188,13 +1270,7 @@ export default function Page() {
             </div>
 
             <div className="pt-3 text-xl text-white/65 sm:text-2xl">超過距離</div>
-            <div
-              className={`min-h-[58px] w-full rounded-[18px] border px-4 py-3 text-xl sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:py-4 sm:text-2xl ${
-                distanceAlert
-                  ? "border-red-500/40 bg-red-950/25 text-red-400"
-                  : "border-white/10 bg-black/20 text-white"
-              }`}
-            >
+            <div className="min-h-[58px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 py-3 text-xl text-white sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:py-4 sm:text-2xl">
               {typeof overDistanceKm === "number" ? (
                 <span className="font-bold">{overDistanceKm} km</span>
               ) : (
@@ -1203,14 +1279,8 @@ export default function Page() {
             </div>
 
             <div className="pt-3 text-xl text-white/65 sm:text-2xl">警告</div>
-            <div
-              className={`min-h-[58px] w-full rounded-[18px] border px-4 py-3 text-xl font-bold sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:py-4 sm:text-2xl ${
-                distanceAlert
-                  ? "border-red-500/40 bg-red-950/25 text-red-400"
-                  : "border-white/10 bg-black/20 text-white/60"
-              }`}
-            >
-              {distanceAlert || "なし"}
+            <div className="min-h-[58px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 py-3 text-xl font-bold text-white/80 sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:py-4 sm:text-2xl">
+              {distanceAlert ? "要確認あり" : "なし"}
             </div>
 
             <div className="pt-3 text-xl text-white/65 sm:text-2xl">備考</div>
