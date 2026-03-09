@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-/** ========= types ========= */
 type DriverRow = { id: number; name: string };
 type VehicleRow = { id: number; name: string };
 type LocationRow = { id: number; name: string; kind?: string | null };
@@ -41,7 +40,6 @@ type FlowPayload = {
   運転者: string;
   車両: string;
   出発地: string;
-
   到着１: string;
   到着２: string;
   到着３: string;
@@ -50,10 +48,8 @@ type FlowPayload = {
   到着６: string;
   到着７: string;
   到着８: string;
-
   バス: string;
   "金額（円）": number | "";
-
   "距離（始）": number | "";
   "距離（始）〜到着１": number | "";
   "距離（到着１〜到着２）": number | "";
@@ -63,11 +59,8 @@ type FlowPayload = {
   "距離（到着５〜到着６）": number | "";
   "距離（到着６〜到着７）": number | "";
   "距離（到着７〜到着８）": number | "";
-
   "総走行距離（km）": number | "";
-
   備考: string;
-
   出発写真URL: string;
   到着写真URL到着１: string;
   到着写真URL到着２: string;
@@ -88,12 +81,10 @@ type GoogleOcrResponse = {
   error?: string;
 };
 
-/** ========= constants ========= */
 const BUCKET = "order-photos";
 const DIFF_LIMIT_KM = 100;
 const MAX_ARRIVALS = 8;
 
-/** ========= utils ========= */
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
@@ -172,7 +163,6 @@ function pickBestCandidateFromList(cands: string[]) {
     else if (n === 5 || n === 7) sc += 80;
     else if (n === 4 || n === 8) sc += 40;
     else sc += 1;
-
     if (s.startsWith("0")) sc -= 5;
     sc += Math.min(new Set(s.split("")).size, 6);
     return sc;
@@ -183,11 +173,9 @@ function pickBestCandidateFromList(cands: string[]) {
 
 async function readJsonOrThrow(res: Response) {
   const text = await res.text();
-
   if (!res.ok) {
     throw new Error(text || `HTTP ${res.status}`);
   }
-
   if (!text) return [];
   return JSON.parse(text);
 }
@@ -228,15 +216,13 @@ function getFareAmount(fromId: number | null, toId: number | null, fares: FareRo
   return null;
 }
 
-/** OCR保護エリア（触らない） */
 async function cropMeterArea(file: File): Promise<Blob> {
   const img = document.createElement("img");
   img.src = URL.createObjectURL(file);
 
   await new Promise<void>((resolve, reject) => {
     img.onload = () => resolve();
-    img.onerror = () =>
-      reject(new Error("画像読み込みに失敗（HEIC等はJPEG/PNGにしてね）"));
+    img.onerror = () => reject(new Error("画像読み込みに失敗"));
   });
 
   const W = img.naturalWidth;
@@ -287,43 +273,35 @@ async function callGoogleOcr(imageFile: File): Promise<GoogleOcrResponse> {
   return (j ?? { ok: false, error: "empty response" }) as GoogleOcrResponse;
 }
 
-/** ========= main ========= */
 export default function Page() {
   const [mode, setMode] = useState<Mode>("route");
 
-  // masters
   const [drivers, setDrivers] = useState<DriverRow[]>([]);
   const [vehicles, setVehicles] = useState<VehicleRow[]>([]);
   const [locations, setLocations] = useState<LocationRow[]>([]);
   const [fares, setFares] = useState<FareRow[]>([]);
   const [loadErr, setLoadErr] = useState("");
 
-  // driver / vehicle
-  const [driverName, setDriverName] = useState<string>("");
-  const [vehicleName, setVehicleName] = useState<string>("");
+  const [driverName, setDriverName] = useState("");
+  const [vehicleName, setVehicleName] = useState("");
 
-  // route
   const [fromId, setFromId] = useState<number | null>(null);
-  const [arrivalCount, setArrivalCount] = useState<number>(1);
+  const [arrivalCount, setArrivalCount] = useState(1);
   const [arrivals, setArrivals] = useState<ArrivalInput[]>(
     Array.from({ length: MAX_ARRIVALS }, () => emptyArrival())
   );
 
-  // depart
   const [departOdo, setDepartOdo] = useState<number | null>(null);
   const [departPhoto, setDepartPhoto] = useState<File | null>(null);
   const [departPreview, setDepartPreview] = useState<string | null>(null);
 
-  // ui
   const [status, setStatus] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [ocrBusyKey, setOcrBusyKey] = useState<string | null>(null);
   const [note, setNote] = useState("");
 
-  // time
   const [now, setNow] = useState<Date>(() => new Date());
 
-  // file input refs
   const departFileRef = useRef<HTMLInputElement | null>(null);
   const arrivalFileRefs = useRef<Array<HTMLInputElement | null>>([]);
 
@@ -332,7 +310,6 @@ export default function Page() {
     return () => clearInterval(t);
   }, []);
 
-  /** ========= masters load ========= */
   const reloadMasters = useCallback(async () => {
     try {
       setLoadErr("");
@@ -398,18 +375,10 @@ export default function Page() {
   }, [reloadMasters]);
 
   useEffect(() => {
-    const handleFocus = () => {
-      reloadMasters();
-    };
-
-    const handlePageShow = () => {
-      reloadMasters();
-    };
-
+    const handleFocus = () => reloadMasters();
+    const handlePageShow = () => reloadMasters();
     const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        reloadMasters();
-      }
+      if (document.visibilityState === "visible") reloadMasters();
     };
 
     window.addEventListener("focus", handleFocus);
@@ -423,7 +392,6 @@ export default function Page() {
     };
   }, [reloadMasters]);
 
-  /** ========= lookups ========= */
   const locMap = useMemo(() => {
     const m = new Map<number, string>();
     for (const l of locations) m.set(l.id, l.name);
@@ -443,7 +411,6 @@ export default function Page() {
     return names.join("→");
   }, [fromId, arrivals, arrivalCount, locMap]);
 
-  /** ========= fare ========= */
   const computedAmountYen = useMemo(() => {
     if (mode === "bus") return 2000;
     if (fromId == null) return null;
@@ -465,7 +432,6 @@ export default function Page() {
     return sum;
   }, [mode, fromId, arrivals, arrivalCount, fares]);
 
-  /** ========= distances ========= */
   const segmentDistances = useMemo(() => {
     const s1 = calcSeg(departOdo, arrivals[0]?.odo ?? null);
     const s2 = calcSeg(arrivals[0]?.odo ?? null, arrivals[1]?.odo ?? null);
@@ -490,7 +456,6 @@ export default function Page() {
     return false;
   }, [arrivalCount, arrivals, departOdo, totalDistanceKm]);
 
-  /** ========= preview ========= */
   useEffect(() => {
     if (!departPhoto) {
       setDepartPreview(null);
@@ -501,7 +466,6 @@ export default function Page() {
     return () => URL.revokeObjectURL(url);
   }, [departPhoto]);
 
-  /** ========= arrivals helpers ========= */
   function updateArrival(index: number, patch: Partial<ArrivalInput>) {
     setArrivals((prev) => {
       const next = [...prev];
@@ -526,7 +490,6 @@ export default function Page() {
     setArrivalCount((c) => Math.max(1, c - 1));
   }
 
-  /** ========= OCR ========= */
   async function runOcrGoogleStrong(file: File, target: "depart" | number) {
     const key = target === "depart" ? "depart" : `arrive-${target}`;
     if (ocrBusyKey) return;
@@ -534,11 +497,8 @@ export default function Page() {
     setOcrBusyKey(key);
 
     const applyOdo = (num: number) => {
-      if (target === "depart") {
-        setDepartOdo(num);
-      } else {
-        updateArrival(target, { odo: num });
-      }
+      if (target === "depart") setDepartOdo(num);
+      else updateArrival(target, { odo: num });
     };
 
     const markDone = () => {
@@ -583,7 +543,6 @@ export default function Page() {
   useEffect(() => {
     if (!departPhoto) return;
     runOcrGoogleStrong(departPhoto, "depart");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [departPhoto]);
 
   useEffect(() => {
@@ -594,10 +553,8 @@ export default function Page() {
         break;
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [arrivals, arrivalCount]);
 
-  /** ========= storage ========= */
   async function uploadOnePhoto(file: File, prefix: string) {
     const ext = file.name.split(".").pop() || "jpg";
     const filename = `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
@@ -608,15 +565,13 @@ export default function Page() {
       contentType: file.type || "image/jpeg",
     });
     if (up.error) {
-      console.error("[storage upload]", up.error);
-      throw new Error("写真アップロードに失敗（Storage/RLS/バケット設定を確認）");
+      throw new Error("写真アップロードに失敗");
     }
 
     const pub = supabase.storage.from(BUCKET).getPublicUrl(path);
     return { path, url: pub.data?.publicUrl ?? null };
   }
 
-  /** ========= Power Automate ========= */
   async function postToFlow(payload: FlowPayload) {
     const res = await fetch("/api/powerautomate", {
       method: "POST",
@@ -642,7 +597,6 @@ export default function Page() {
     }
   }
 
-  /** ========= validation ========= */
   const missingLabels = useMemo(() => {
     const miss: string[] = [];
 
@@ -683,7 +637,6 @@ export default function Page() {
 
   const canSave = useMemo(() => missingLabels.length === 0 && !isSaving, [missingLabels, isSaving]);
 
-  /** ========= save ========= */
   async function onSave() {
     if (isSaving) return;
     setStatus("");
@@ -743,10 +696,7 @@ export default function Page() {
 
       const ins = await supabase.from("pickup_orders").insert(payloadDb);
       if (ins.error) {
-        const e: any = ins.error;
-        throw new Error(
-          `DB insert失敗: ${e?.message ?? ""} ${e?.details ?? ""} ${e?.hint ?? ""} (${e?.code ?? ""})`.trim()
-        );
+        throw new Error("DB insert失敗");
       }
 
       const arrivalNames = Array.from({ length: MAX_ARRIVALS }, (_, i) =>
@@ -785,7 +735,7 @@ export default function Page() {
 
         "総走行距離（km）": asCell(totalDistanceKm) as number | "",
 
-        備考: (note ?? "").trim(),
+        備考: note.trim(),
 
         出発写真URL: depart_photo_url ?? "",
         到着写真URL到着１: arrivalPhotoUrls[0] ?? "",
@@ -801,8 +751,7 @@ export default function Page() {
       try {
         await postToFlow(flowPayload);
         setStatus("保存しました");
-      } catch (e: any) {
-        console.error("[flow send]", e);
+      } catch {
         setStatus("保存しました（Power Automate送信は失敗）");
       }
 
@@ -820,34 +769,36 @@ export default function Page() {
   }
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top,rgba(24,80,180,0.18),transparent_28%),linear-gradient(180deg,#020817_0%,#030712_100%)] text-white px-4 py-6 sm:px-6 sm:py-8">
+    <main className="min-h-screen w-full overflow-x-hidden bg-[radial-gradient(circle_at_top,rgba(24,80,180,0.18),transparent_28%),linear-gradient(180deg,#020817_0%,#030712_100%)] px-3 py-4 text-white sm:px-6 sm:py-8">
       <div className="mx-auto w-full max-w-4xl">
-        <div className="mb-8 flex items-start justify-between gap-4">
+        <div className="mb-5 flex flex-col gap-3 sm:mb-7 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 flex-1">
-<h1 className="break-keep text-center text-[42px] font-extrabold tracking-[-0.05em] leading-[1.08] sm:text-5xl">
-  ピックアップ手当
-</h1>
-          <p className="mx-auto mt-3 max-w-xl text-center text-base leading-8 text-white/55 sm:text-xl">
-  通常ルートは料金表参照 / バスは一律2,000円
-</p>          </div>
+            <h1 className="break-keep text-left text-[34px] font-extrabold leading-[1.06] tracking-[-0.05em] sm:text-[42px]">
+              ピックアップ手当
+            </h1>
+            <p className="mt-2 max-w-xl text-left text-[15px] leading-7 text-white/55 sm:text-lg">
+              通常ルートは料金表参照 / バスは一律2,000円
+            </p>
+          </div>
 
-          <Link
-            href="/admin"
-            className="shrink-0 rounded-[20px] border border-white/10 bg-white/5 px-5 py-4 text-lg font-bold text-white transition hover:bg-white/10 sm:px-6"
-          >
-            管理ページへ
-          </Link>
+          <div className="flex justify-start sm:justify-end">
+            <Link
+              href="/admin"
+              className="inline-flex min-h-[52px] items-center justify-center rounded-[18px] border border-white/10 bg-white/5 px-5 py-2 text-base font-bold transition hover:bg-white/10"
+            >
+              管理ページへ
+            </Link>
+          </div>
         </div>
 
-        <div className="rounded-[30px] border border-white/10 bg-[rgba(2,6,23,0.78)] p-5 shadow-[0_16px_50px_rgba(0,0,0,0.30)] backdrop-blur-[12px] sm:p-7">
-          {/* 運転者 */}
-          <div className="mb-5 grid grid-cols-[96px_1fr] items-start gap-4 sm:grid-cols-[120px_1fr]">
-            <div className="pt-3 text-2xl text-white/65">運転者</div>
-            <div className="space-y-3">
+        <div className="w-full overflow-hidden rounded-[24px] border border-white/10 bg-[rgba(2,6,23,0.80)] p-4 shadow-[0_16px_50px_rgba(0,0,0,0.30)] backdrop-blur-[12px] sm:rounded-[28px] sm:p-6">
+          <div className="mb-4 grid w-full grid-cols-[84px_1fr] items-start gap-x-3 gap-y-2 sm:grid-cols-[110px_1fr]">
+            <div className="pt-3 text-xl text-white/65 sm:text-2xl">運転者</div>
+            <div className="space-y-2">
               <select
                 value={driverName}
                 onChange={(e) => setDriverName(e.target.value)}
-                className="min-h-[64px] w-full rounded-[24px] border border-white/10 bg-black/20 px-6 text-2xl text-white outline-none"
+                className="min-h-[58px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 text-xl text-white outline-none sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:text-2xl"
               >
                 <option value="">選択</option>
                 {drivers.map((d) => (
@@ -856,21 +807,19 @@ export default function Page() {
                   </option>
                 ))}
               </select>
-
               <div className="flex justify-end">
-                <span className="text-xl text-white/35">{drivers.length}人</span>
+                <span className="text-lg text-white/35 sm:text-xl">{drivers.length}人</span>
               </div>
             </div>
           </div>
 
-          {/* 車両 */}
-          <div className="mb-5 grid grid-cols-[96px_1fr] items-start gap-4 sm:grid-cols-[120px_1fr]">
-            <div className="pt-3 text-2xl text-white/65">車両</div>
-            <div className="space-y-3">
+          <div className="mb-4 grid w-full grid-cols-[84px_1fr] items-start gap-x-3 gap-y-2 sm:grid-cols-[110px_1fr]">
+            <div className="pt-3 text-xl text-white/65 sm:text-2xl">車両</div>
+            <div className="space-y-2">
               <select
                 value={vehicleName}
                 onChange={(e) => setVehicleName(e.target.value)}
-                className="min-h-[64px] w-full rounded-[24px] border border-white/10 bg-black/20 px-6 text-2xl text-white outline-none"
+                className="min-h-[58px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 text-xl text-white outline-none sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:text-2xl"
               >
                 <option value="">選択</option>
                 {vehicles.map((v) => (
@@ -879,19 +828,17 @@ export default function Page() {
                   </option>
                 ))}
               </select>
-
               <div className="flex justify-end">
-                <span className="text-xl text-white/35">{vehicles.length}台</span>
+                <span className="text-lg text-white/35 sm:text-xl">{vehicles.length}台</span>
               </div>
             </div>
           </div>
 
-          {/* モード */}
-          <div className="mb-6 grid grid-cols-2 gap-4">
+          <div className="mb-5 grid grid-cols-2 gap-3 sm:mb-6 sm:gap-4">
             <button
               type="button"
               onClick={() => setMode("route")}
-              className={`min-h-[78px] rounded-[24px] border text-2xl font-bold transition ${
+              className={`min-h-[70px] rounded-[20px] border text-xl font-bold transition sm:min-h-[78px] sm:rounded-[24px] sm:text-2xl ${
                 mode === "route"
                   ? "border-blue-400/35 bg-[#20357b] text-white"
                   : "border-white/10 bg-white/5 text-white hover:bg-white/10"
@@ -902,7 +849,7 @@ export default function Page() {
             <button
               type="button"
               onClick={() => setMode("bus")}
-              className={`min-h-[78px] rounded-[24px] border text-2xl font-bold transition ${
+              className={`min-h-[70px] rounded-[20px] border text-xl font-bold transition sm:min-h-[78px] sm:rounded-[24px] sm:text-2xl ${
                 mode === "bus"
                   ? "border-blue-400/35 bg-[#20357b] text-white"
                   : "border-white/10 bg-white/5 text-white hover:bg-white/10"
@@ -912,13 +859,12 @@ export default function Page() {
             </button>
           </div>
 
-          {/* 上部フォーム */}
-          <div className="grid grid-cols-[96px_1fr] items-start gap-x-4 gap-y-5 sm:grid-cols-[120px_1fr]">
-            <div className="pt-3 text-2xl text-white/65">出発地</div>
+          <div className="grid w-full grid-cols-[84px_1fr] items-start gap-x-3 gap-y-4 sm:grid-cols-[110px_1fr] sm:gap-y-5">
+            <div className="pt-3 text-xl text-white/65 sm:text-2xl">出発地</div>
             <select
               value={fromId ?? ""}
               onChange={(e) => setFromId(e.target.value ? Number(e.target.value) : null)}
-              className="min-h-[64px] w-full rounded-[24px] border border-white/10 bg-black/20 px-6 text-2xl text-white outline-none disabled:opacity-50"
+              className="min-h-[58px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 text-xl text-white outline-none disabled:opacity-50 sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:text-2xl"
               disabled={mode === "bus"}
             >
               <option value="">選択</option>
@@ -929,13 +875,13 @@ export default function Page() {
               ))}
             </select>
 
-            <div className="pt-3 text-2xl text-white/65">到着数</div>
-            <div className="flex flex-wrap items-center gap-4">
+            <div className="pt-3 text-xl text-white/65 sm:text-2xl">到着数</div>
+            <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
                 onClick={addArrival}
                 disabled={arrivalCount >= MAX_ARRIVALS}
-                className="min-h-[64px] rounded-[22px] border border-white/10 bg-white/5 px-6 text-2xl font-bold transition hover:bg-white/10 disabled:opacity-50"
+                className="min-h-[56px] rounded-[18px] border border-white/10 bg-white/5 px-4 text-lg font-bold transition hover:bg-white/10 disabled:opacity-50 sm:min-h-[64px] sm:rounded-[22px] sm:px-6 sm:text-2xl"
               >
                 ＋ 到着を追加
               </button>
@@ -943,20 +889,20 @@ export default function Page() {
                 type="button"
                 onClick={removeLastArrival}
                 disabled={arrivalCount <= 1}
-                className="min-h-[64px] rounded-[22px] border border-white/10 bg-white/5 px-6 text-2xl font-bold transition hover:bg-white/10 disabled:opacity-50"
+                className="min-h-[56px] rounded-[18px] border border-white/10 bg-white/5 px-4 text-lg font-bold transition hover:bg-white/10 disabled:opacity-50 sm:min-h-[64px] sm:rounded-[22px] sm:px-6 sm:text-2xl"
               >
                 － 最後の到着を削除
               </button>
-              <span className="text-2xl text-white/40">最大{MAX_ARRIVALS}個</span>
+              <span className="text-lg text-white/40 sm:text-2xl">最大{MAX_ARRIVALS}個</span>
             </div>
 
-            <div className="pt-3 text-2xl text-white/65">ルート</div>
-            <div className="min-h-[64px] w-full break-all rounded-[24px] border border-white/10 bg-black/20 px-6 py-4 text-2xl">
+            <div className="pt-3 text-xl text-white/65 sm:text-2xl">ルート</div>
+            <div className="min-h-[58px] w-full break-all rounded-[18px] border border-white/10 bg-black/20 px-4 py-3 text-xl sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:py-4 sm:text-2xl">
               {routeChain || "—"}
             </div>
 
-            <div className="pt-3 text-2xl text-white/65">金額</div>
-            <div className="min-h-[64px] w-full rounded-[24px] border border-white/10 bg-black/20 px-6 py-4 text-2xl">
+            <div className="pt-3 text-xl text-white/65 sm:text-2xl">金額</div>
+            <div className="min-h-[58px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 py-3 text-xl sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:py-4 sm:text-2xl">
               {mode === "bus" ? (
                 <span className="font-bold">2000円</span>
               ) : computedAmountYen != null ? (
@@ -966,25 +912,23 @@ export default function Page() {
               )}
             </div>
 
-            <div className="pt-3 text-2xl text-white/65">報告時間</div>
-            <div className="min-h-[64px] w-full rounded-[24px] border border-white/10 bg-black/20 px-6 py-4 text-2xl">
+            <div className="pt-3 text-xl text-white/65 sm:text-2xl">報告時間</div>
+            <div className="min-h-[58px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 py-3 text-xl sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:py-4 sm:text-2xl">
               {formatReportTimeJa(now)}
             </div>
 
-            <div className="pt-3 text-2xl text-white/65">ODO(出発)</div>
-            <div>
-              <input
-                value={departOdo == null ? "" : String(departOdo)}
-                onChange={(e) => {
-                  const v = onlyAsciiDigitsFromAnyWidth(e.target.value);
-                  setDepartOdo(v === "" ? null : Number(v));
-                }}
-                placeholder="例: １１２６０３（全角OK）"
-                className="min-h-[64px] w-full rounded-[24px] border border-white/10 bg-black/20 px-6 text-2xl text-white outline-none placeholder:text-white/30"
-              />
-            </div>
+            <div className="pt-3 text-xl text-white/65 sm:text-2xl">ODO(出発)</div>
+            <input
+              value={departOdo == null ? "" : String(departOdo)}
+              onChange={(e) => {
+                const v = onlyAsciiDigitsFromAnyWidth(e.target.value);
+                setDepartOdo(v === "" ? null : Number(v));
+              }}
+              placeholder="例: １１２６０３（全角OK）"
+              className="min-h-[58px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 text-xl text-white outline-none placeholder:text-white/30 sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:text-2xl"
+            />
 
-            <div className="pt-3 text-2xl text-white/65">写真(出発)</div>
+            <div className="pt-3 text-xl text-white/65 sm:text-2xl">写真(出発)</div>
             <div>
               <input
                 ref={departFileRef}
@@ -997,15 +941,15 @@ export default function Page() {
                   e.currentTarget.value = "";
                 }}
               />
-              <div className="flex flex-wrap items-center gap-4">
+              <div className="flex flex-wrap items-center gap-3">
                 <button
                   type="button"
                   onClick={() => departFileRef.current?.click()}
-                  className="min-h-[58px] rounded-[20px] border border-white/10 bg-white/5 px-5 text-xl font-bold transition hover:bg-white/10"
+                  className="min-h-[52px] rounded-[18px] border border-white/10 bg-white/5 px-4 text-base font-bold transition hover:bg-white/10 sm:min-h-[58px] sm:rounded-[20px] sm:px-5 sm:text-xl"
                 >
                   写真を選ぶ
                 </button>
-                <span className="text-xl text-white/65">
+                <span className="text-base text-white/65 sm:text-xl">
                   {departPhoto ? departPhoto.name : "未選択"}
                 </span>
               </div>
@@ -1014,15 +958,14 @@ export default function Page() {
                   <img
                     src={departPreview}
                     alt="depart preview"
-                    className="max-h-52 rounded-[20px] border border-white/10"
+                    className="max-h-52 rounded-[18px] border border-white/10 sm:rounded-[20px]"
                   />
                 </div>
               ) : null}
             </div>
           </div>
 
-          {/* 到着1〜8 */}
-          <div className="mt-7 space-y-5">
+          <div className="mt-6 space-y-4 sm:mt-7 sm:space-y-5">
             {visibleArrivals.map((a, idx) => {
               const segText =
                 typeof segmentDistances[idx] === "number" ? `${segmentDistances[idx]} km` : "—";
@@ -1030,14 +973,14 @@ export default function Page() {
               return (
                 <div
                   key={`arrival-${idx}`}
-                  className="rounded-[26px] border border-white/10 bg-[rgba(255,255,255,0.03)] p-5"
+                  className="rounded-[22px] border border-white/10 bg-[rgba(255,255,255,0.03)] p-4 sm:rounded-[26px] sm:p-5"
                 >
-                  <div className="mb-4 text-3xl font-extrabold tracking-[-0.03em]">
+                  <div className="mb-3 text-2xl font-extrabold tracking-[-0.03em] sm:mb-4 sm:text-3xl">
                     到着{idx + 1}
                   </div>
 
-                  <div className="grid grid-cols-[96px_1fr] items-start gap-x-4 gap-y-5 sm:grid-cols-[120px_1fr]">
-                    <div className="pt-3 text-2xl text-white/65">場所</div>
+                  <div className="grid w-full grid-cols-[84px_1fr] items-start gap-x-3 gap-y-4 sm:grid-cols-[110px_1fr] sm:gap-y-5">
+                    <div className="pt-3 text-xl text-white/65 sm:text-2xl">場所</div>
                     <select
                       value={a.locationId ?? ""}
                       onChange={(e) =>
@@ -1045,7 +988,7 @@ export default function Page() {
                           locationId: e.target.value ? Number(e.target.value) : null,
                         })
                       }
-                      className="min-h-[64px] w-full rounded-[24px] border border-white/10 bg-black/20 px-6 text-2xl text-white outline-none disabled:opacity-50"
+                      className="min-h-[58px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 text-xl text-white outline-none disabled:opacity-50 sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:text-2xl"
                       disabled={mode === "bus"}
                     >
                       <option value="">選択</option>
@@ -1056,25 +999,23 @@ export default function Page() {
                       ))}
                     </select>
 
-                    <div className="pt-3 text-2xl text-white/65">ODO</div>
-                    <div>
-                      <input
-                        value={a.odo == null ? "" : String(a.odo)}
-                        onChange={(e) => {
-                          const v = onlyAsciiDigitsFromAnyWidth(e.target.value);
-                          updateArrival(idx, { odo: v === "" ? null : Number(v) });
-                        }}
-                        placeholder={`例: １１２８５０（到着${idx + 1} / 全角OK）`}
-                        className="min-h-[64px] w-full rounded-[24px] border border-white/10 bg-black/20 px-6 text-2xl text-white outline-none placeholder:text-white/30"
-                      />
-                    </div>
+                    <div className="pt-3 text-xl text-white/65 sm:text-2xl">ODO</div>
+                    <input
+                      value={a.odo == null ? "" : String(a.odo)}
+                      onChange={(e) => {
+                        const v = onlyAsciiDigitsFromAnyWidth(e.target.value);
+                        updateArrival(idx, { odo: v === "" ? null : Number(v) });
+                      }}
+                      placeholder={`例: １１２８５０（到着${idx + 1} / 全角OK）`}
+                      className="min-h-[58px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 text-xl text-white outline-none placeholder:text-white/30 sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:text-2xl"
+                    />
 
-                    <div className="pt-3 text-2xl text-white/65">区間距離</div>
-                    <div className="min-h-[64px] w-full rounded-[24px] border border-white/10 bg-black/20 px-6 py-4 text-2xl">
+                    <div className="pt-3 text-xl text-white/65 sm:text-2xl">区間距離</div>
+                    <div className="min-h-[58px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 py-3 text-xl sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:py-4 sm:text-2xl">
                       {idx === 0 ? `始→到着1: ${segText}` : `到着${idx}→到着${idx + 1}: ${segText}`}
                     </div>
 
-                    <div className="pt-3 text-2xl text-white/65">写真</div>
+                    <div className="pt-3 text-xl text-white/65 sm:text-2xl">写真</div>
                     <div>
                       <input
                         ref={(el) => {
@@ -1109,15 +1050,15 @@ export default function Page() {
                           e.currentTarget.value = "";
                         }}
                       />
-                      <div className="flex flex-wrap items-center gap-4">
+                      <div className="flex flex-wrap items-center gap-3">
                         <button
                           type="button"
                           onClick={() => arrivalFileRefs.current[idx]?.click()}
-                          className="min-h-[58px] rounded-[20px] border border-white/10 bg-white/5 px-5 text-xl font-bold transition hover:bg-white/10"
+                          className="min-h-[52px] rounded-[18px] border border-white/10 bg-white/5 px-4 text-base font-bold transition hover:bg-white/10 sm:min-h-[58px] sm:rounded-[20px] sm:px-5 sm:text-xl"
                         >
                           写真を選ぶ
                         </button>
-                        <span className="text-xl text-white/65">
+                        <span className="text-base text-white/65 sm:text-xl">
                           {a.photoFile ? a.photoFile.name : "未選択"}
                         </span>
                       </div>
@@ -1126,7 +1067,7 @@ export default function Page() {
                           <img
                             src={a.photoPreview}
                             alt={`arrival-${idx + 1}-preview`}
-                            className="max-h-52 rounded-[20px] border border-white/10"
+                            className="max-h-52 rounded-[18px] border border-white/10 sm:rounded-[20px]"
                           />
                         </div>
                       ) : null}
@@ -1137,34 +1078,35 @@ export default function Page() {
             })}
           </div>
 
-          {/* 下部 */}
-          <div className="mt-7 grid grid-cols-[96px_1fr] items-start gap-x-4 gap-y-5 sm:grid-cols-[120px_1fr]">
-            <div className="pt-3 text-2xl text-white/65">総走行距離</div>
-            <div className="min-h-[64px] w-full rounded-[24px] border border-white/10 bg-black/20 px-6 py-4 text-2xl">
+          <div className="mt-6 grid w-full grid-cols-[84px_1fr] items-start gap-x-3 gap-y-4 sm:mt-7 sm:grid-cols-[110px_1fr] sm:gap-y-5">
+            <div className="pt-3 text-xl text-white/65 sm:text-2xl">総走行距離</div>
+            <div className="min-h-[58px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 py-3 text-xl sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:py-4 sm:text-2xl">
               <span className="font-bold">
                 {typeof totalDistanceKm === "number" ? `${totalDistanceKm} km` : "—"}
               </span>
             </div>
 
-            <div className="pt-3 text-2xl text-white/65">備考</div>
+            <div className="pt-3 text-xl text-white/65 sm:text-2xl">備考</div>
             <input
               value={note}
               onChange={(e) => setNote(e.target.value)}
               placeholder="任意"
-              className="min-h-[64px] w-full rounded-[24px] border border-white/10 bg-black/20 px-6 text-2xl text-white outline-none placeholder:text-white/30"
+              className="min-h-[58px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 text-xl text-white outline-none placeholder:text-white/30 sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:text-2xl"
             />
           </div>
 
-          {loadErr ? <div className="mt-5 text-lg text-white/60">{loadErr}</div> : null}
+          {loadErr ? <div className="mt-5 text-base text-white/60 sm:text-lg">{loadErr}</div> : null}
           {status ? (
-            <div className="mt-5 whitespace-pre-wrap text-xl text-white/75">{status}</div>
+            <div className="mt-5 whitespace-pre-wrap text-base text-white/75 sm:text-xl">
+              {status}
+            </div>
           ) : null}
 
           <button
             type="button"
             onClick={onSave}
             disabled={!canSave}
-            className="mt-6 min-h-[72px] w-full rounded-[24px] border border-blue-400/30 bg-[#20357b] text-2xl font-extrabold text-white transition hover:bg-[#26418f] disabled:opacity-50"
+            className="mt-6 min-h-[66px] w-full rounded-[20px] border border-blue-400/30 bg-[#20357b] text-xl font-extrabold text-white transition hover:bg-[#26418f] disabled:opacity-50 sm:min-h-[72px] sm:rounded-[24px] sm:text-2xl"
             title={!canSave ? "備考以外に未入力があると保存できません" : ""}
           >
             {isSaving ? "保存中..." : "保存"}
