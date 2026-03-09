@@ -1,74 +1,76 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { assertAdminKey } from "@/lib/admin/assertAdminKey";
 import { supabaseAdmin } from "@/lib/admin/supabaseAdmin";
+import { assertAdminKey } from "@/lib/admin/assertAdminKey";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
     if (req.method === "GET") {
       const { data, error } = await supabaseAdmin
         .from("fares")
-        .select("*")
-        .order("from_id", { ascending: true })
-        .order("to_id", { ascending: true });
+        .select("from_id,to_id,amount_yen")
+        .order("from_id", { ascending: true });
 
-      if (error) throw error;
-      return res.status(200).json(data ?? []);
-    }
-
-    if (req.method === "POST") {
-      assertAdminKey(req);
-
-      const { from_id, to_id, amount_yen } = req.body ?? {};
-      if (!from_id || !to_id || amount_yen == null) {
-        return res.status(400).json({ error: "from_id, to_id, amount_yen are required" });
+      if (error) {
+        return res.status(500).json({ ok: false, error: error.message });
       }
 
-      const amount = Number(amount_yen);
-      if (!Number.isFinite(amount)) {
-        return res.status(400).json({ error: "amount_yen must be a number" });
+      return res.status(200).json({ ok: true, items: data ?? [] });
+    }
+
+    assertAdminKey(req);
+
+    if (req.method === "POST") {
+      const from_id = Number(req.body?.from_id);
+      const to_id = Number(req.body?.to_id);
+      const amount_yen = Number(req.body?.amount_yen);
+
+      if (!from_id || !to_id || !Number.isFinite(amount_yen)) {
+        return res.status(400).json({ ok: false, error: "invalid payload" });
       }
 
       const { data, error } = await supabaseAdmin
         .from("fares")
-        .upsert([{ from_id, to_id, amount_yen: amount }], {
-          onConflict: "from_id,to_id",
-        })
-        .select()
+        .upsert(
+          { from_id, to_id, amount_yen },
+          { onConflict: "from_id,to_id" }
+        )
+        .select("from_id,to_id,amount_yen")
         .single();
 
-      if (error) throw error;
-      return res.status(200).json(data);
+      if (error) {
+        return res.status(500).json({ ok: false, error: error.message });
+      }
+
+      return res.status(200).json({ ok: true, item: data });
     }
 
     if (req.method === "DELETE") {
-      assertAdminKey(req);
+      const from_id = Number(req.body?.from_id);
+      const to_id = Number(req.body?.to_id);
 
-      const { from_id, to_id } = req.body ?? {};
       if (!from_id || !to_id) {
-        return res.status(400).json({ error: "from_id and to_id are required" });
+        return res.status(400).json({ ok: false, error: "from_id and to_id are required" });
       }
 
       const { error } = await supabaseAdmin
         .from("fares")
         .delete()
-        .match({ from_id, to_id });
+        .eq("from_id", from_id)
+        .eq("to_id", to_id);
 
-      if (error) throw error;
+      if (error) {
+        return res.status(500).json({ ok: false, error: error.message });
+      }
+
       return res.status(200).json({ ok: true });
     }
 
-    res.setHeader("Allow", "GET,POST,DELETE");
-    return res.status(405).json({ error: "Method not allowed" });
-  } catch (error: unknown) {
-    const statusCode =
-      typeof error === "object" &&
-      error !== null &&
-      "statusCode" in error &&
-      typeof (error as { statusCode?: unknown }).statusCode === "number"
-        ? (error as { statusCode: number }).statusCode
-        : 500;
-
-    const message = error instanceof Error ? error.message : "Internal Server Error";
-    return res.status(statusCode).json({ error: message });
+    return res.status(405).json({ ok: false, error: "Method not allowed" });
+  } catch (e: any) {
+    const msg = e?.message ?? "Server error";
+    if (msg === "Unauthorized") {
+      return res.status(401).json({ ok: false, error: "Unauthorized" });
+    }
+    return res.status(500).json({ ok: false, error: msg });
   }
 }
