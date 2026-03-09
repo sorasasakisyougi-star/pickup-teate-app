@@ -7,10 +7,6 @@ body,
   padding: 0;
   width: 100%;
   min-height: 100%;
-  background: #020817;
-}
-
-html {
   background:
     radial-gradient(circle at top, rgba(24, 80, 180, 0.18), transparent 28%),
     linear-gradient(180deg, #020817 0%, #030712 100%);
@@ -18,10 +14,6 @@ html {
 }
 
 body {
-  background:
-    radial-gradient(circle at top, rgba(24, 80, 180, 0.18), transparent 28%),
-    linear-gradient(180deg, #020817 0%, #030712 100%);
-  background-color: #020817;
   color: white;
   overflow-x: hidden;
   font-family:
