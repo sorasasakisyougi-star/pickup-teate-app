@@ -8,6 +8,12 @@ type DriverRow = { id: number; name: string };
 type VehicleRow = { id: number; name: string };
 type LocationRow = { id: number; name: string; kind?: string | null };
 type FareRow = { from_id: number; to_id: number; amount_yen: number };
+type RouteDistanceRow = {
+  from_location_id: number;
+  to_location_id: number;
+  distance_km: number;
+};
+
 type Mode = "route" | "bus";
 
 type PickupOrderInsert = {
@@ -40,6 +46,7 @@ type FlowPayload = {
   運転者: string;
   車両: string;
   出発地: string;
+
   到着１: string;
   到着２: string;
   到着３: string;
@@ -48,8 +55,10 @@ type FlowPayload = {
   到着６: string;
   到着７: string;
   到着８: string;
+
   バス: string;
   "金額（円）": number | "";
+
   "距離（始）": number | "";
   "距離（始）〜到着１": number | "";
   "距離（到着１〜到着２）": number | "";
@@ -59,8 +68,14 @@ type FlowPayload = {
   "距離（到着５〜到着６）": number | "";
   "距離（到着６〜到着７）": number | "";
   "距離（到着７〜到着８）": number | "";
+
   "総走行距離（km）": number | "";
+  "想定距離（km）": number | "";
+  "超過距離（km）": number | "";
+  距離警告: string;
+
   備考: string;
+
   出発写真URL: string;
   到着写真URL到着１: string;
   到着写真URL到着２: string;
@@ -84,6 +99,7 @@ type GoogleOcrResponse = {
 const BUCKET = "order-photos";
 const DIFF_LIMIT_KM = 100;
 const MAX_ARRIVALS = 8;
+const DISTANCE_ALERT_THRESHOLD_KM = 3;
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
@@ -180,28 +196,37 @@ async function readJsonOrThrow(res: Response) {
   return JSON.parse(text);
 }
 
+function normalizeItems<T>(data: any): T[] {
+  if (!data) return [];
+  if (Array.isArray(data)) return data as T[];
+  if (Array.isArray(data.items)) return data.items as T[];
+  if (Array.isArray(data.data)) return data.data as T[];
+  return [];
+}
+
 async function fetchDrivers(): Promise<DriverRow[]> {
   const res = await fetch("/api/admin/drivers", { cache: "no-store" });
-  const data = await readJsonOrThrow(res);
-  return Array.isArray(data) ? data : [];
+  return normalizeItems<DriverRow>(await readJsonOrThrow(res));
 }
 
 async function fetchVehicles(): Promise<VehicleRow[]> {
   const res = await fetch("/api/admin/vehicles", { cache: "no-store" });
-  const data = await readJsonOrThrow(res);
-  return Array.isArray(data) ? data : [];
+  return normalizeItems<VehicleRow>(await readJsonOrThrow(res));
 }
 
 async function fetchLocations(): Promise<LocationRow[]> {
   const res = await fetch("/api/admin/locations", { cache: "no-store" });
-  const data = await readJsonOrThrow(res);
-  return Array.isArray(data) ? data : [];
+  return normalizeItems<LocationRow>(await readJsonOrThrow(res));
 }
 
 async function fetchFares(): Promise<FareRow[]> {
   const res = await fetch("/api/admin/fares", { cache: "no-store" });
-  const data = await readJsonOrThrow(res);
-  return Array.isArray(data) ? data : [];
+  return normalizeItems<FareRow>(await readJsonOrThrow(res));
+}
+
+async function fetchRouteDistances(): Promise<RouteDistanceRow[]> {
+  const res = await fetch("/api/admin/route-distances", { cache: "no-store" });
+  return normalizeItems<RouteDistanceRow>(await readJsonOrThrow(res));
 }
 
 function getFareAmount(fromId: number | null, toId: number | null, fares: FareRow[]) {
@@ -212,6 +237,26 @@ function getFareAmount(fromId: number | null, toId: number | null, fares: FareRo
 
   const reverse = fares.find((x) => x.from_id === toId && x.to_id === fromId);
   if (reverse) return reverse.amount_yen;
+
+  return null;
+}
+
+function getRouteDistanceKm(
+  fromId: number | null,
+  toId: number | null,
+  rows: RouteDistanceRow[]
+) {
+  if (!fromId || !toId) return null;
+
+  const direct = rows.find(
+    (x) => x.from_location_id === fromId && x.to_location_id === toId
+  );
+  if (direct) return direct.distance_km;
+
+  const reverse = rows.find(
+    (x) => x.from_location_id === toId && x.to_location_id === fromId
+  );
+  if (reverse) return reverse.distance_km;
 
   return null;
 }
@@ -227,7 +272,6 @@ async function cropMeterArea(file: File): Promise<Blob> {
 
   const W = img.naturalWidth;
   const H = img.naturalHeight;
-
   const left = Math.floor(W * 0.18);
   const top = Math.floor(H * 0.48);
   const width = Math.floor(W * 0.64);
@@ -280,6 +324,7 @@ export default function Page() {
   const [vehicles, setVehicles] = useState<VehicleRow[]>([]);
   const [locations, setLocations] = useState<LocationRow[]>([]);
   const [fares, setFares] = useState<FareRow[]>([]);
+  const [routeDistances, setRouteDistances] = useState<RouteDistanceRow[]>([]);
   const [loadErr, setLoadErr] = useState("");
 
   const [driverName, setDriverName] = useState("");
@@ -314,11 +359,18 @@ export default function Page() {
     try {
       setLoadErr("");
 
-      const [driversData, vehiclesData, locationsData, faresData] = await Promise.all([
+      const [
+        driversData,
+        vehiclesData,
+        locationsData,
+        faresData,
+        routeDistancesData,
+      ] = await Promise.all([
         fetchDrivers(),
         fetchVehicles(),
         fetchLocations(),
         fetchFares(),
+        fetchRouteDistances(),
       ]);
 
       const sortedDrivers = [...driversData].sort((a, b) =>
@@ -335,6 +387,7 @@ export default function Page() {
       setVehicles(sortedVehicles);
       setLocations(sortedLocations);
       setFares(faresData);
+      setRouteDistances(routeDistancesData);
 
       setDriverName((prev) => {
         if (prev && sortedDrivers.some((d) => d.name === prev)) return prev;
@@ -367,6 +420,7 @@ export default function Page() {
       setVehicles([]);
       setLocations([]);
       setFares([]);
+      setRouteDistances([]);
     }
   }, []);
 
@@ -432,6 +486,27 @@ export default function Page() {
     return sum;
   }, [mode, fromId, arrivals, arrivalCount, fares]);
 
+  const expectedDistanceKm = useMemo(() => {
+    if (mode === "bus") return "";
+    if (fromId == null) return "";
+
+    let cur = fromId;
+    let sum = 0;
+
+    for (let i = 0; i < arrivalCount; i++) {
+      const next = arrivals[i].locationId;
+      if (next == null) return "";
+
+      const km = getRouteDistanceKm(cur, next, routeDistances);
+      if (km == null) return "";
+
+      sum += km;
+      cur = next;
+    }
+
+    return sum;
+  }, [mode, fromId, arrivals, arrivalCount, routeDistances]);
+
   const segmentDistances = useMemo(() => {
     const s1 = calcSeg(departOdo, arrivals[0]?.odo ?? null);
     const s2 = calcSeg(arrivals[0]?.odo ?? null, arrivals[1]?.odo ?? null);
@@ -445,6 +520,20 @@ export default function Page() {
   }, [departOdo, arrivals]);
 
   const totalDistanceKm = useMemo(() => sumSegs([...segmentDistances]), [segmentDistances]);
+
+  const overDistanceKm = useMemo(() => {
+    if (typeof totalDistanceKm !== "number") return "";
+    if (typeof expectedDistanceKm !== "number") return "";
+
+    const diff = totalDistanceKm - expectedDistanceKm;
+    if (!Number.isFinite(diff)) return "";
+    return diff > 0 ? diff : 0;
+  }, [totalDistanceKm, expectedDistanceKm]);
+
+  const distanceAlert = useMemo(() => {
+    if (typeof overDistanceKm !== "number") return "";
+    return overDistanceKm > DISTANCE_ALERT_THRESHOLD_KM ? "要確認" : "";
+  }, [overDistanceKm]);
 
   const distanceInvalid = useMemo(() => {
     for (let i = 0; i < arrivalCount; i++) {
@@ -734,6 +823,9 @@ export default function Page() {
         "距離（到着７〜到着８）": asCell(s8) as number | "",
 
         "総走行距離（km）": asCell(totalDistanceKm) as number | "",
+        "想定距離（km）": asCell(expectedDistanceKm) as number | "",
+        "超過距離（km）": asCell(overDistanceKm) as number | "",
+        距離警告: distanceAlert,
 
         備考: note.trim(),
 
@@ -774,11 +866,11 @@ export default function Page() {
         <div className="mb-5 flex flex-col gap-3 sm:mb-7 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 flex-1">
             <h1 className="break-keep text-left text-[30px] font-extrabold leading-[1.08] tracking-[-0.05em] sm:text-[38px]">
-  ピックアップ手当
-</h1>
+              ピックアップ手当
+            </h1>
             <p className="mt-2 max-w-xl text-left text-[14px] leading-7 text-white/55 sm:text-lg">
-  通常ルートは料金表参照 / バスは一律2,000円
-</p>
+              通常ルートは料金表参照 / バスは一律2,000円
+            </p>
           </div>
 
           <div className="flex justify-start sm:justify-end">
@@ -907,6 +999,15 @@ export default function Page() {
                 <span className="font-bold">2000円</span>
               ) : computedAmountYen != null ? (
                 <span className="font-bold">{computedAmountYen.toLocaleString()}円</span>
+              ) : (
+                <span className="text-white/50">—</span>
+              )}
+            </div>
+
+            <div className="pt-3 text-xl text-white/65 sm:text-2xl">想定距離</div>
+            <div className="min-h-[58px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 py-3 text-xl sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:py-4 sm:text-2xl">
+              {typeof expectedDistanceKm === "number" ? (
+                <span className="font-bold">{expectedDistanceKm} km</span>
               ) : (
                 <span className="text-white/50">—</span>
               )}
@@ -1084,6 +1185,32 @@ export default function Page() {
               <span className="font-bold">
                 {typeof totalDistanceKm === "number" ? `${totalDistanceKm} km` : "—"}
               </span>
+            </div>
+
+            <div className="pt-3 text-xl text-white/65 sm:text-2xl">超過距離</div>
+            <div
+              className={`min-h-[58px] w-full rounded-[18px] border px-4 py-3 text-xl sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:py-4 sm:text-2xl ${
+                distanceAlert
+                  ? "border-red-500/40 bg-red-950/25 text-red-400"
+                  : "border-white/10 bg-black/20 text-white"
+              }`}
+            >
+              {typeof overDistanceKm === "number" ? (
+                <span className="font-bold">{overDistanceKm} km</span>
+              ) : (
+                <span className="text-white/50">—</span>
+              )}
+            </div>
+
+            <div className="pt-3 text-xl text-white/65 sm:text-2xl">警告</div>
+            <div
+              className={`min-h-[58px] w-full rounded-[18px] border px-4 py-3 text-xl font-bold sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:py-4 sm:text-2xl ${
+                distanceAlert
+                  ? "border-red-500/40 bg-red-950/25 text-red-400"
+                  : "border-white/10 bg-black/20 text-white/60"
+              }`}
+            >
+              {distanceAlert || "なし"}
             </div>
 
             <div className="pt-3 text-xl text-white/65 sm:text-2xl">備考</div>
