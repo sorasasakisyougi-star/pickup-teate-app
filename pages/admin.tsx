@@ -913,8 +913,7 @@ export default function AdminPage() {
                 再読み込み
               </button>
 
-              <button type="button" style={styles.accentBtn} onClick={handleSeedData} disabled={loading}>
-                以前のデータを投入
+            
               </button>
             </div>
 
