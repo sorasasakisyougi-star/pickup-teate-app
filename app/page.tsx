@@ -8,11 +8,6 @@ type DriverRow = { id: number; name: string };
 type VehicleRow = { id: number; name: string };
 type LocationRow = { id: number; name: string; kind?: string | null };
 type FareRow = { from_id: number; to_id: number; amount_yen: number };
-type RouteDistanceRow = {
-  from_location_id: number;
-  to_location_id: number;
-  distance_km: number;
-};
 
 type Mode = "route" | "bus";
 
@@ -100,7 +95,6 @@ type GoogleOcrResponse = {
 const BUCKET = "order-photos";
 const DIFF_LIMIT_KM = 100;
 const MAX_ARRIVALS = 8;
-const DISTANCE_ALERT_THRESHOLD_KM = 3;
 const MASTER_UPDATED_KEY = "pickup_masters_updated_at";
 
 function pad2(n: number) {
@@ -230,26 +224,6 @@ function getFareAmount(fromId: number | null, toId: number | null, fares: FareRo
   return null;
 }
 
-function getRouteDistanceKm(
-  fromId: number | null,
-  toId: number | null,
-  rows: RouteDistanceRow[]
-) {
-  if (!fromId || !toId) return null;
-
-  const direct = rows.find(
-    (x) => x.from_location_id === fromId && x.to_location_id === toId
-  );
-  if (direct) return direct.distance_km;
-
-  const reverse = rows.find(
-    (x) => x.from_location_id === toId && x.to_location_id === fromId
-  );
-  if (reverse) return reverse.distance_km;
-
-  return null;
-}
-
 async function cropMeterArea(file: File): Promise<Blob> {
   const img = document.createElement("img");
   img.src = URL.createObjectURL(file);
@@ -313,7 +287,6 @@ export default function Page() {
   const [vehicles, setVehicles] = useState<VehicleRow[]>([]);
   const [locations, setLocations] = useState<LocationRow[]>([]);
   const [fares, setFares] = useState<FareRow[]>([]);
-  const [routeDistances, setRouteDistances] = useState<RouteDistanceRow[]>([]);
   const [loadErr, setLoadErr] = useState("");
 
   const [driverName, setDriverName] = useState("");
@@ -359,18 +332,11 @@ export default function Page() {
       try {
         setLoadErr("");
 
-        const [
-          driversData,
-          vehiclesData,
-          locationsData,
-          faresData,
-          routeDistancesData,
-        ] = await Promise.all([
+        const [driversData, vehiclesData, locationsData, faresData] = await Promise.all([
           fetchAdminList<DriverRow>("/api/admin/drivers"),
           fetchAdminList<VehicleRow>("/api/admin/vehicles"),
           fetchAdminList<LocationRow>("/api/admin/locations"),
           fetchAdminList<FareRow>("/api/admin/fares"),
-          fetchAdminList<RouteDistanceRow>("/api/admin/route-distances"),
         ]);
 
         const sortedDrivers = [...driversData].sort((a, b) =>
@@ -387,7 +353,6 @@ export default function Page() {
         setVehicles(sortedVehicles);
         setLocations(sortedLocations);
         setFares(faresData);
-        setRouteDistances(routeDistancesData);
 
         setDriverName((prev) => {
           if (prev && sortedDrivers.some((d) => d.name === prev)) return prev;
@@ -504,33 +469,6 @@ export default function Page() {
     return sum;
   }, [mode, fromId, arrivals, arrivalCount, fares]);
 
-  const expectedSegmentDistances = useMemo(() => {
-    const result: Array<number | ""> = Array(MAX_ARRIVALS).fill("");
-
-    if (mode === "bus") return result;
-    if (fromId == null) return result;
-
-    let cur = fromId;
-
-    for (let i = 0; i < arrivalCount; i++) {
-      const next = arrivals[i].locationId;
-      if (next == null) {
-        result[i] = "";
-        break;
-      }
-
-      const km = getRouteDistanceKm(cur, next, routeDistances);
-      result[i] = typeof km === "number" ? km : "";
-      cur = next;
-    }
-
-    return result;
-  }, [mode, fromId, arrivals, arrivalCount, routeDistances]);
-
-  const expectedDistanceKm = useMemo(() => {
-    return sumSegs(expectedSegmentDistances);
-  }, [expectedSegmentDistances]);
-
   const segmentDistances = useMemo(() => {
     const s1 = calcSeg(departOdo, arrivals[0]?.odo ?? null);
     const s2 = calcSeg(arrivals[0]?.odo ?? null, arrivals[1]?.odo ?? null);
@@ -543,65 +481,7 @@ export default function Page() {
     return [s1, s2, s3, s4, s5, s6, s7, s8] as const;
   }, [departOdo, arrivals]);
 
-  const segmentOverDistances = useMemo(() => {
-    return segmentDistances.map((actual, idx) => {
-      const expected = expectedSegmentDistances[idx];
-
-      if (typeof actual !== "number") return "";
-      if (typeof expected !== "number") return "";
-
-      const diff = actual - expected;
-      if (!Number.isFinite(diff)) return "";
-      return diff > 0 ? diff : 0;
-    }) as Array<number | "">;
-  }, [segmentDistances, expectedSegmentDistances]);
-
-  const segmentAlerts = useMemo(() => {
-    return segmentOverDistances.map((v) => {
-      if (typeof v !== "number") return "";
-      return v > DISTANCE_ALERT_THRESHOLD_KM ? "要確認" : "";
-    });
-  }, [segmentOverDistances]);
-
   const totalDistanceKm = useMemo(() => sumSegs([...segmentDistances]), [segmentDistances]);
-
-  const overDistanceKm = useMemo(() => {
-    if (typeof totalDistanceKm !== "number") return "";
-    if (typeof expectedDistanceKm !== "number") return "";
-
-    const diff = totalDistanceKm - expectedDistanceKm;
-    if (!Number.isFinite(diff)) return "";
-    return diff > 0 ? diff : 0;
-  }, [totalDistanceKm, expectedDistanceKm]);
-
-  const distanceAlert = useMemo(() => {
-    return segmentAlerts.some((x) => x === "要確認") ? "要確認" : "";
-  }, [segmentAlerts]);
-
-  const segmentAlertDetail = useMemo(() => {
-    const messages: string[] = [];
-
-    for (let i = 0; i < arrivalCount; i++) {
-      const alert = segmentAlerts[i];
-      const actual = segmentDistances[i];
-      const expected = expectedSegmentDistances[i];
-      const over = segmentOverDistances[i];
-
-      if (alert !== "要確認") continue;
-      if (
-        typeof actual !== "number" ||
-        typeof expected !== "number" ||
-        typeof over !== "number"
-      ) {
-        continue;
-      }
-
-      const label = i === 0 ? "始→到着1" : `到着${i}→到着${i + 1}`;
-      messages.push(`${label}: 実${actual}km / 想定${expected}km / 超過${over}km`);
-    }
-
-    return messages.join(" | ");
-  }, [arrivalCount, segmentAlerts, segmentDistances, expectedSegmentDistances, segmentOverDistances]);
 
   const distanceInvalid = useMemo(() => {
     for (let i = 0; i < arrivalCount; i++) {
@@ -887,10 +767,10 @@ export default function Page() {
         "距離（到着７〜到着８）": asCell(s8) as number | "",
 
         "総走行距離（km）": asCell(totalDistanceKm) as number | "",
-        "想定距離（km）": asCell(expectedDistanceKm) as number | "",
-        "超過距離（km）": asCell(overDistanceKm) as number | "",
-        距離警告: distanceAlert,
-        区間警告詳細: segmentAlertDetail,
+        "想定距離（km）": "",
+        "超過距離（km）": "",
+        距離警告: "",
+        区間警告詳細: "",
 
         備考: note.trim(),
 
@@ -1064,15 +944,6 @@ export default function Page() {
                 <span className="font-bold">2000円</span>
               ) : computedAmountYen != null ? (
                 <span className="font-bold">{computedAmountYen.toLocaleString()}円</span>
-              ) : (
-                <span className="text-white/50">—</span>
-              )}
-            </div>
-
-            <div className="pt-3 text-xl text-white/65 sm:text-2xl">想定距離</div>
-            <div className="min-h-[58px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 py-3 text-xl sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:py-4 sm:text-2xl">
-              {typeof expectedDistanceKm === "number" ? (
-                <span className="font-bold">{expectedDistanceKm} km</span>
               ) : (
                 <span className="text-white/50">—</span>
               )}
