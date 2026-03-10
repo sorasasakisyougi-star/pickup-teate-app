@@ -1,1114 +1,547 @@
+"use client";
+
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import type { CSSProperties } from "react";
 
-type DriverRow = {
-  id: number;
-  name: string;
-};
+type DriverRow = { id: number; name: string };
+type VehicleRow = { id: number; name: string };
+type LocationRow = { id: number; name: string; kind?: string | null };
+type FareRow = { from_id: number; to_id: number; amount_yen: number };
 
-type VehicleRow = {
-  id: number;
-  name: string;
-};
-
-type LocationRow = {
-  id: number;
-  name: string;
-  kind?: string | null;
-};
-
-type FareRow = {
-  id: number;
-  from_id: number;
-  to_id: number;
-  amount_yen: number;
-};
-
-type RouteDistanceRow = {
-  id: number;
-  from_location_id: number;
-  to_location_id: number;
-  distance_km: number;
-  from_location?: {
-    id: number;
-    name: string;
-  } | null;
-  to_location?: {
-    id: number;
-    name: string;
-  } | null;
-};
-
-async function readJsonOrThrow(res: Response) {
-  const text = await res.text();
-
-  if (!res.ok) {
-    throw new Error(text || `HTTP ${res.status}`);
-  }
-
-  if (!text) return null;
-
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
+function getAdminKeyStorage() {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem("pickup_admin_key") ?? "";
 }
 
-function normalizeItems<T>(json: any): T[] {
-  if (!json) return [];
-  if (Array.isArray(json)) return json as T[];
-  if (Array.isArray(json.items)) return json.items as T[];
-  if (Array.isArray(json.data)) return json.data as T[];
+async function readJson(res: Response) {
+  const text = await res.text();
+  let data: any = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
+  if (!res.ok) {
+    throw new Error(data?.error || text || `HTTP ${res.status}`);
+  }
+  return data;
+}
+
+function normalizeItems<T>(data: any): T[] {
+  if (!data) return [];
+  if (Array.isArray(data)) return data as T[];
+  if (Array.isArray(data.items)) return data.items as T[];
+  if (Array.isArray(data.data)) return data.data as T[];
   return [];
 }
 
-function getErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message) return error.message;
-  return fallback;
-}
-
-const styles: Record<string, CSSProperties> = {
-  
-page: {
-  minHeight: "100vh",
-  width: "100%",
-  overflowX: "hidden",
-  background:
-    "radial-gradient(circle at top, rgba(24,80,180,0.18), transparent 28%), linear-gradient(180deg, #020817 0%, #030712 100%)",
-  color: "#fff",
-  padding: "10px 8px 36px",
-  fontFamily:
-    'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-},
-  container: {
-  width: "100%",
-  maxWidth: 920,
-  margin: "0 auto",
-  padding: 0,
-},
-  topbar: {
-    width: "100%",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "stretch",
-    gap: 14,
-    marginBottom: 16,
-  },
-
-  title: {
-  margin: 0,
-  fontSize: "clamp(32px, 10vw, 56px)",
-  fontWeight: 900,
-  letterSpacing: "-0.05em",
-  lineHeight: 1.02,
-  textAlign: "left",
-  wordBreak: "keep-all",
-},
-  backWrap: {
-    display: "flex",
-    justifyContent: "flex-start",
-  },
-
-  ghostLink: {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: 54,
-    padding: "0 22px",
-    borderRadius: 18,
-    border: "1px solid rgba(255,255,255,0.10)",
-    background: "rgba(255,255,255,0.05)",
-    color: "#fff",
-    textDecoration: "none",
-    fontWeight: 800,
-    fontSize: 16,
-    whiteSpace: "nowrap",
-    boxSizing: "border-box",
-  },
-
-  card: {
-  width: "100%",
-  maxWidth: "100%",
-  border: "1px solid rgba(255,255,255,0.08)",
-  background: "rgba(2, 6, 23, 0.82)",
-  borderRadius: 24,
-  padding: 16,
-  boxShadow: "0 16px 50px rgba(0,0,0,0.30)",
-  backdropFilter: "blur(12px)",
-  boxSizing: "border-box",
-  overflow: "hidden",
-},
-  block: {
-    width: "100%",
-    display: "grid",
-    gap: 12,
-    boxSizing: "border-box",
-  },
-
-  sectionTitle: {
-    fontSize: 17,
-    fontWeight: 900,
-    margin: "0 0 10px",
-    lineHeight: 1.3,
-  },
-
-  label: {
-    fontSize: 14,
-    fontWeight: 800,
-    marginBottom: 6,
-    color: "rgba(255,255,255,0.92)",
-  },
-
-  input: {
-    width: "100%",
-    maxWidth: "100%",
-    minWidth: 0,
-    borderRadius: 14,
-    border: "1px solid rgba(255,255,255,0.10)",
-    background: "rgba(0,0,0,0.18)",
-    color: "#fff",
-    padding: "14px 14px",
-    outline: "none",
-    fontSize: 16,
-    boxSizing: "border-box",
-    display: "block",
-  },
-
-  select: {
-    width: "100%",
-    maxWidth: "100%",
-    minWidth: 0,
-    borderRadius: 14,
-    border: "1px solid rgba(255,255,255,0.10)",
-    background: "rgba(0,0,0,0.18)",
-    color: "#fff",
-    padding: "14px 14px",
-    outline: "none",
-    fontSize: 16,
-    boxSizing: "border-box",
-    display: "block",
-  },
-
-  primaryBtn: {
-    border: "1px solid rgba(99,102,241,0.55)",
-    background: "#2563eb",
-    color: "#fff",
-    borderRadius: 16,
-    padding: "14px 18px",
-    fontWeight: 900,
-    fontSize: 16,
-    cursor: "pointer",
-    width: "fit-content",
-  },
-
-  secondaryBtn: {
-    border: "1px solid rgba(255,255,255,0.10)",
-    background: "rgba(255,255,255,0.04)",
-    color: "#fff",
-    borderRadius: 16,
-    padding: "14px 18px",
-    fontWeight: 800,
-    fontSize: 16,
-    cursor: "pointer",
-    width: "fit-content",
-  },
-
-  dangerBtn: {
-    border: "1px solid rgba(220,38,38,0.50)",
-    background: "#b91c1c",
-    color: "#fff",
-    borderRadius: 12,
-    padding: "10px 14px",
-    fontWeight: 800,
-    fontSize: 13,
-    cursor: "pointer",
-  },
-
-  hr: {
-    border: "none",
-    borderTop: "1px solid rgba(255,255,255,0.08)",
-    margin: "18px 0",
-  },
-
-  status: {
-    fontSize: 13,
-    marginTop: 8,
-    opacity: 0.82,
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
-  },
-
-  helper: {
-    fontSize: 12,
-    opacity: 0.7,
-    lineHeight: 1.5,
-  },
-
-  collapsibleBtn: {
-    width: "100%",
-    maxWidth: "100%",
-    minWidth: 0,
-    borderRadius: 16,
-    border: "1px solid rgba(255,255,255,0.10)",
-    background: "rgba(255,255,255,0.04)",
-    color: "#fff",
-    padding: "14px 16px",
-    textAlign: "left",
-    cursor: "pointer",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-    boxSizing: "border-box",
-  },
-
-  itemList: {
-    width: "100%",
-    display: "grid",
-    gap: 10,
-  },
-
-  itemCard: {
-    width: "100%",
-    maxWidth: "100%",
-    minWidth: 0,
-    border: "1px solid rgba(255,255,255,0.08)",
-    background: "rgba(255,255,255,0.03)",
-    borderRadius: 16,
-    padding: 14,
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "stretch",
-    justifyContent: "flex-start",
-    gap: 12,
-    boxSizing: "border-box",
-  },
-
-  itemMeta: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-    minWidth: 0,
-  },
-
-  itemTitle: {
-    fontSize: 15,
-    fontWeight: 900,
-    lineHeight: 1.35,
-    wordBreak: "break-word",
-  },
-
-  itemSub: {
-    fontSize: 13,
-    opacity: 0.72,
-    lineHeight: 1.45,
-    wordBreak: "break-word",
-  },
-
-  emptyCard: {
-    width: "100%",
-    border: "1px solid rgba(255,255,255,0.08)",
-    background: "rgba(255,255,255,0.03)",
-    borderRadius: 16,
-    padding: 14,
-    opacity: 0.72,
-    boxSizing: "border-box",
-  },
-};
-
 export default function AdminPage() {
   const [adminKey, setAdminKey] = useState("");
-  const [statusText, setStatusText] = useState("");
+  const [authenticated, setAuthenticated] = useState(false);
+  const [status, setStatus] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const [drivers, setDrivers] = useState<DriverRow[]>([]);
   const [vehicles, setVehicles] = useState<VehicleRow[]>([]);
   const [locations, setLocations] = useState<LocationRow[]>([]);
   const [fares, setFares] = useState<FareRow[]>([]);
-  const [routeDistances, setRouteDistances] = useState<RouteDistanceRow[]>([]);
 
-  const [driverName, setDriverName] = useState("");
-  const [vehicleName, setVehicleName] = useState("");
-  const [locationName, setLocationName] = useState("");
+  const [newDriverName, setNewDriverName] = useState("");
+  const [newVehicleName, setNewVehicleName] = useState("");
+  const [newLocationName, setNewLocationName] = useState("");
 
-  const [fareFromId, setFareFromId] = useState("");
-  const [fareToId, setFareToId] = useState("");
+  const [fareFromId, setFareFromId] = useState<number | "">("");
+  const [fareToId, setFareToId] = useState<number | "">("");
   const [fareAmount, setFareAmount] = useState("");
 
-  const [distanceFromId, setDistanceFromId] = useState("");
-  const [distanceToId, setDistanceToId] = useState("");
-  const [distanceKm, setDistanceKm] = useState("");
-
-  const [driversOpen, setDriversOpen] = useState(false);
-  const [vehiclesOpen, setVehiclesOpen] = useState(false);
-  const [locationsOpen, setLocationsOpen] = useState(false);
-  const [faresOpen, setFaresOpen] = useState(false);
-  const [distancesOpen, setDistancesOpen] = useState(false);
-
-  const [loading, setLoading] = useState(false);
+  const [openDrivers, setOpenDrivers] = useState(false);
+  const [openVehicles, setOpenVehicles] = useState(false);
+  const [openLocations, setOpenLocations] = useState(false);
+  const [openFares, setOpenFares] = useState(false);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const saved = localStorage.getItem("pickup_admin_key") || "";
-    if (saved) setAdminKey(saved);
+    const saved = getAdminKeyStorage();
+    if (saved) {
+      setAdminKey(saved);
+      setAuthenticated(true);
+    }
   }, []);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (adminKey.trim()) {
-      localStorage.setItem("pickup_admin_key", adminKey.trim());
-    }
-  }, [adminKey]);
-
-  const locationNameMap = useMemo(() => {
-    const map = new Map<number, string>();
-    for (const l of locations) map.set(l.id, l.name);
-    return map;
-  }, [locations]);
-
-  async function loadDrivers(key: string) {
-    const res = await fetch("/api/admin/drivers", {
-      headers: { "x-admin-key": key },
-    });
-    const json = await readJsonOrThrow(res);
-    setDrivers(normalizeItems<DriverRow>(json));
+  async function apiGet(path: string) {
+    const res = await fetch(`${path}?ts=${Date.now()}`, { cache: "no-store" });
+    return readJson(res);
   }
 
-  async function loadVehicles(key: string) {
-    const res = await fetch("/api/admin/vehicles", {
-      headers: { "x-admin-key": key },
+  async function apiPost(path: string, body: any) {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-admin-key": adminKey,
+      },
+      body: JSON.stringify(body),
     });
-    const json = await readJsonOrThrow(res);
-    setVehicles(normalizeItems<VehicleRow>(json));
+    return readJson(res);
   }
 
-  async function loadLocations(key: string) {
-    const res = await fetch("/api/admin/locations", {
-      headers: { "x-admin-key": key },
+  async function apiDelete(path: string, body: any) {
+    const res = await fetch(path, {
+      method: "DELETE",
+      headers: {
+        "content-type": "application/json",
+        "x-admin-key": adminKey,
+      },
+      body: JSON.stringify(body),
     });
-    const json = await readJsonOrThrow(res);
-    setLocations(normalizeItems<LocationRow>(json));
-  }
-
-  async function loadFares(key: string) {
-    const res = await fetch("/api/admin/fares", {
-      headers: { "x-admin-key": key },
-    });
-    const json = await readJsonOrThrow(res);
-    setFares(normalizeItems<FareRow>(json));
-  }
-
-  async function loadRouteDistances(key: string) {
-    const res = await fetch("/api/admin/route-distances", {
-      headers: { "x-admin-key": key },
-    });
-    const json = await readJsonOrThrow(res);
-    setRouteDistances(normalizeItems<RouteDistanceRow>(json));
+    return readJson(res);
   }
 
   async function reloadAll() {
-    const key = adminKey.trim();
-    if (!key) {
-      alert("パスワードを入力してください");
-      return;
-    }
-
     setLoading(true);
-    setStatusText("読み込み中…");
-
+    setStatus("");
     try {
-      await Promise.all([
-        loadDrivers(key),
-        loadVehicles(key),
-        loadLocations(key),
-        loadFares(key),
-        loadRouteDistances(key),
+      const [driversRes, vehiclesRes, locationsRes, faresRes] = await Promise.all([
+        apiGet("/api/admin/drivers"),
+        apiGet("/api/admin/vehicles"),
+        apiGet("/api/admin/locations"),
+        apiGet("/api/admin/fares"),
       ]);
-      setStatusText("再読み込みしました");
-    } catch (error) {
-      const msg = getErrorMessage(error, "再読み込みに失敗しました");
-      setStatusText(msg);
-      alert(msg);
+
+      setDrivers(
+        normalizeItems<DriverRow>(driversRes).sort((a, b) => a.name.localeCompare(b.name, "ja"))
+      );
+      setVehicles(
+        normalizeItems<VehicleRow>(vehiclesRes).sort((a, b) => a.name.localeCompare(b.name, "ja"))
+      );
+      setLocations(
+        normalizeItems<LocationRow>(locationsRes).sort((a, b) => a.name.localeCompare(b.name, "ja"))
+      );
+      setFares(normalizeItems<FareRow>(faresRes));
+    } catch (e: any) {
+      setStatus(e?.message ?? "読込失敗");
     } finally {
       setLoading(false);
     }
   }
 
-  async function postJson(url: string, body: Record<string, unknown>) {
-    const key = adminKey.trim();
-    if (!key) throw new Error("パスワードを入力してください");
+  useEffect(() => {
+    if (authenticated) {
+      reloadAll();
+    }
+  }, [authenticated]);
 
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-admin-key": key,
-      },
-      body: JSON.stringify(body),
+  const locationNameMap = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const l of locations) m.set(l.id, l.name);
+    return m;
+  }, [locations]);
+
+  const fareRowsForView = useMemo(() => {
+    return [...fares].sort((a, b) => {
+      const aFrom = locationNameMap.get(a.from_id) ?? "";
+      const bFrom = locationNameMap.get(b.from_id) ?? "";
+      if (aFrom !== bFrom) return aFrom.localeCompare(bFrom, "ja");
+      const aTo = locationNameMap.get(a.to_id) ?? "";
+      const bTo = locationNameMap.get(b.to_id) ?? "";
+      return aTo.localeCompare(bTo, "ja");
     });
+  }, [fares, locationNameMap]);
 
-    return await readJsonOrThrow(res);
-  }
-
-  async function deleteJson(url: string, body: Record<string, unknown>) {
-    const key = adminKey.trim();
-    if (!key) throw new Error("パスワードを入力してください");
-
-    const res = await fetch(url, {
-      method: "DELETE",
-      headers: {
-        "Content-Type": "application/json",
-        "x-admin-key": key,
-      },
-      body: JSON.stringify(body),
-    });
-
-    return await readJsonOrThrow(res);
-  }
-
-  async function handleAddDriver() {
-    if (!driverName.trim()) {
-      alert("運転手名を入力してください");
+  function saveAdminKey() {
+    if (!adminKey.trim()) {
+      setStatus("ADMIN_KEYを入力してください");
       return;
     }
+    localStorage.setItem("pickup_admin_key", adminKey.trim());
+    setAuthenticated(true);
+    setStatus("管理キーを保存しました");
+  }
 
+  async function addDriver() {
+    if (!newDriverName.trim()) return;
     try {
-      setLoading(true);
-      setStatusText("運転手を保存中…");
-      await postJson("/api/admin/drivers", { name: driverName.trim() });
-      setDriverName("");
-      await loadDrivers(adminKey.trim());
-      setStatusText("運転手を追加しました");
-    } catch (error) {
-      const msg = getErrorMessage(error, "運転手の追加に失敗しました");
-      setStatusText(msg);
-      alert(msg);
-    } finally {
-      setLoading(false);
+      setStatus("");
+      await apiPost("/api/admin/drivers", { name: newDriverName.trim() });
+      localStorage.setItem("pickup_masters_updated_at", String(Date.now()));
+      setNewDriverName("");
+      setStatus("運転手を追加しました");
+      await reloadAll();
+    } catch (e: any) {
+      setStatus(e?.message ?? "追加失敗");
     }
   }
 
-  async function handleDeleteDriver(id: number) {
-    if (!window.confirm("この運転手を削除しますか？")) return;
-
+  async function deleteDriver(id: number) {
     try {
-      setLoading(true);
-      setStatusText("運転手を削除中…");
-      await deleteJson("/api/admin/drivers", { id });
-      await loadDrivers(adminKey.trim());
-      setStatusText("運転手を削除しました");
-    } catch (error) {
-      const msg = getErrorMessage(error, "運転手の削除に失敗しました");
-      setStatusText(msg);
-      alert(msg);
-    } finally {
-      setLoading(false);
+      setStatus("");
+      await apiDelete("/api/admin/drivers", { id });
+      localStorage.setItem("pickup_masters_updated_at", String(Date.now()));
+      setStatus("運転手を削除しました");
+      await reloadAll();
+    } catch (e: any) {
+      setStatus(e?.message ?? "削除失敗");
     }
   }
 
-  async function handleAddVehicle() {
-    if (!vehicleName.trim()) {
-      alert("車両名を入力してください");
-      return;
-    }
-
+  async function addVehicle() {
+    if (!newVehicleName.trim()) return;
     try {
-      setLoading(true);
-      setStatusText("車両を保存中…");
-      await postJson("/api/admin/vehicles", { name: vehicleName.trim() });
-      setVehicleName("");
-      await loadVehicles(adminKey.trim());
-      setStatusText("車両を追加しました");
-    } catch (error) {
-      const msg = getErrorMessage(error, "車両の追加に失敗しました");
-      setStatusText(msg);
-      alert(msg);
-    } finally {
-      setLoading(false);
+      setStatus("");
+      await apiPost("/api/admin/vehicles", { name: newVehicleName.trim() });
+      localStorage.setItem("pickup_masters_updated_at", String(Date.now()));
+      setNewVehicleName("");
+      setStatus("車両を追加しました");
+      await reloadAll();
+    } catch (e: any) {
+      setStatus(e?.message ?? "追加失敗");
     }
   }
 
-  async function handleDeleteVehicle(id: number) {
-    if (!window.confirm("この車両を削除しますか？")) return;
-
+  async function deleteVehicle(id: number) {
     try {
-      setLoading(true);
-      setStatusText("車両を削除中…");
-      await deleteJson("/api/admin/vehicles", { id });
-      await loadVehicles(adminKey.trim());
-      setStatusText("車両を削除しました");
-    } catch (error) {
-      const msg = getErrorMessage(error, "車両の削除に失敗しました");
-      setStatusText(msg);
-      alert(msg);
-    } finally {
-      setLoading(false);
+      setStatus("");
+      await apiDelete("/api/admin/vehicles", { id });
+      localStorage.setItem("pickup_masters_updated_at", String(Date.now()));
+      setStatus("車両を削除しました");
+      await reloadAll();
+    } catch (e: any) {
+      setStatus(e?.message ?? "削除失敗");
     }
   }
 
-  async function handleAddLocation() {
-    if (!locationName.trim()) {
-      alert("地点名を入力してください");
-      return;
-    }
-
+  async function addLocation() {
+    if (!newLocationName.trim()) return;
     try {
-      setLoading(true);
-      setStatusText("地点を保存中…");
-      await postJson("/api/admin/locations", { name: locationName.trim() });
-      setLocationName("");
-      await loadLocations(adminKey.trim());
-      setStatusText("地点を追加しました");
-    } catch (error) {
-      const msg = getErrorMessage(error, "地点の追加に失敗しました");
-      setStatusText(msg);
-      alert(msg);
-    } finally {
-      setLoading(false);
+      setStatus("");
+      await apiPost("/api/admin/locations", { name: newLocationName.trim() });
+      localStorage.setItem("pickup_masters_updated_at", String(Date.now()));
+      setNewLocationName("");
+      setStatus("地点を追加しました");
+      await reloadAll();
+    } catch (e: any) {
+      setStatus(e?.message ?? "追加失敗");
     }
   }
 
-  async function handleDeleteLocation(id: number) {
-    if (!window.confirm("この地点を削除しますか？")) return;
-
+  async function deleteLocation(id: number) {
     try {
-      setLoading(true);
-      setStatusText("地点を削除中…");
-      await deleteJson("/api/admin/locations", { id });
-      await loadLocations(adminKey.trim());
-      setStatusText("地点を削除しました");
-    } catch (error) {
-      const msg = getErrorMessage(error, "地点の削除に失敗しました");
-      setStatusText(msg);
-      alert(msg);
-    } finally {
-      setLoading(false);
+      setStatus("");
+      await apiDelete("/api/admin/locations", { id });
+      localStorage.setItem("pickup_masters_updated_at", String(Date.now()));
+      setStatus("地点を削除しました");
+      await reloadAll();
+    } catch (e: any) {
+      setStatus(e?.message ?? "削除失敗");
     }
   }
 
-  async function handleUpsertFare() {
-    if (!fareFromId || !fareToId) {
-      alert("出発地と到着地を選択してください");
-      return;
-    }
-
-    if (fareAmount.trim() === "") {
-      alert("金額を入力してください");
-      return;
-    }
-
-    const amount = Number(fareAmount);
-    if (!Number.isFinite(amount) || amount < 0) {
-      alert("金額は0以上の数値で入力してください");
-      return;
-    }
-
+  async function addOrUpdateFare() {
+    if (!fareFromId || !fareToId || !fareAmount.trim()) return;
     try {
-      setLoading(true);
-      setStatusText("区間運賃を保存中…");
-      await postJson("/api/admin/fares", {
+      setStatus("");
+      await apiPost("/api/admin/fares", {
         from_id: Number(fareFromId),
         to_id: Number(fareToId),
-        amount_yen: amount,
+        amount_yen: Number(fareAmount),
       });
+      localStorage.setItem("pickup_masters_updated_at", String(Date.now()));
       setFareFromId("");
       setFareToId("");
       setFareAmount("");
-      await loadFares(adminKey.trim());
-      setStatusText("区間運賃を保存しました");
-    } catch (error) {
-      const msg = getErrorMessage(error, "区間運賃の保存に失敗しました");
-      setStatusText(msg);
-      alert(msg);
-    } finally {
-      setLoading(false);
+      setStatus("区間運賃を追加 / 更新しました");
+      await reloadAll();
+    } catch (e: any) {
+      setStatus(e?.message ?? "追加 / 更新失敗");
     }
   }
 
-  async function handleDeleteFare(id: number) {
-    if (!window.confirm("この区間運賃を削除しますか？")) return;
-
+  async function deleteFare(from_id: number, to_id: number) {
     try {
-      setLoading(true);
-      setStatusText("区間運賃を削除中…");
-      await deleteJson("/api/admin/fares", { id });
-      await loadFares(adminKey.trim());
-      setStatusText("区間運賃を削除しました");
-    } catch (error) {
-      const msg = getErrorMessage(error, "区間運賃の削除に失敗しました");
-      setStatusText(msg);
-      alert(msg);
-    } finally {
-      setLoading(false);
+      setStatus("");
+      await apiDelete("/api/admin/fares", { from_id, to_id });
+      localStorage.setItem("pickup_masters_updated_at", String(Date.now()));
+      setStatus("区間運賃を削除しました");
+      await reloadAll();
+    } catch (e: any) {
+      setStatus(e?.message ?? "削除失敗");
     }
   }
 
-  async function handleUpsertRouteDistance() {
-    if (!distanceFromId || !distanceToId) {
-      alert("出発地と到着地を選択してください");
-      return;
-    }
+  if (!authenticated) {
+    return (
+      <main className="min-h-screen w-full bg-[linear-gradient(180deg,#020617_0%,#030712_100%)] px-4 py-8 text-white">
+        <div className="mx-auto max-w-xl rounded-[28px] border border-white/10 bg-[rgba(2,6,23,0.80)] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
+          <h1 className="text-3xl font-extrabold tracking-[-0.04em]">管理ページ</h1>
+          <p className="mt-2 text-white/55">ADMIN_KEY を入力してください</p>
 
-    if (distanceFromId === distanceToId) {
-      alert("同じ地点同士は登録できません");
-      return;
-    }
+          <input
+            type="password"
+            value={adminKey}
+            onChange={(e) => setAdminKey(e.target.value)}
+            placeholder="ADMIN_KEY"
+            className="mt-6 min-h-[58px] w-full rounded-[20px] border border-white/10 bg-black/20 px-4 text-xl text-white outline-none"
+          />
 
-    if (distanceKm.trim() === "") {
-      alert("距離を入力してください");
-      return;
-    }
+          <button
+            type="button"
+            onClick={saveAdminKey}
+            className="mt-4 min-h-[58px] w-full rounded-[20px] border border-blue-400/30 bg-[#20357b] text-xl font-bold"
+          >
+            入る
+          </button>
 
-    const km = Number(distanceKm);
-    if (!Number.isFinite(km) || km < 0) {
-      alert("距離は0以上の数値で入力してください");
-      return;
-    }
+          <div className="mt-4">
+            <Link href="/" className="text-white/70 underline">
+              入力ページへ戻る
+            </Link>
+          </div>
 
-    try {
-      setLoading(true);
-      setStatusText("距離相場を保存中…");
-      await postJson("/api/admin/route-distances", {
-        from_location_id: Number(distanceFromId),
-        to_location_id: Number(distanceToId),
-        distance_km: km,
-      });
-      setDistanceFromId("");
-      setDistanceToId("");
-      setDistanceKm("");
-      await loadRouteDistances(adminKey.trim());
-      setStatusText("距離相場を保存しました");
-    } catch (error) {
-      const msg = getErrorMessage(error, "距離相場の保存に失敗しました");
-      setStatusText(msg);
-      alert(msg);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleDeleteRouteDistance(id: number) {
-    if (!window.confirm("この距離相場を削除しますか？")) return;
-
-    try {
-      setLoading(true);
-      setStatusText("距離相場を削除中…");
-      await deleteJson("/api/admin/route-distances", { id });
-      await loadRouteDistances(adminKey.trim());
-      setStatusText("距離相場を削除しました");
-    } catch (error) {
-      const msg = getErrorMessage(error, "距離相場の削除に失敗しました");
-      setStatusText(msg);
-      alert(msg);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function renderSimpleList<T extends { id: number; name: string }>(
-    items: T[],
-    onDelete: (id: number) => void,
-    emptyText: string
-  ) {
-    if (items.length === 0) {
-      return (
-        <div style={styles.emptyCard}>
-          <div style={styles.itemTitle}>{emptyText}</div>
+          {status ? <div className="mt-4 text-white/75">{status}</div> : null}
         </div>
-      );
-    }
-
-    return items.map((item) => (
-      <div key={item.id} style={styles.itemCard}>
-        <div style={styles.itemMeta}>
-          <div style={styles.itemTitle}>{item.name}</div>
-          <div style={styles.itemSub}>ID: {item.id}</div>
-        </div>
-
-        <button style={styles.dangerBtn} onClick={() => onDelete(item.id)} type="button">
-          削除
-        </button>
-      </div>
-    ));
+      </main>
+    );
   }
 
   return (
-    <div style={styles.page}>
-      <div style={styles.container}>
-        <div style={styles.topbar}>
-          <h1 style={styles.title}>管理ページ</h1>
-          <div style={styles.backWrap}>
-            <Link href="/" style={styles.ghostLink}>
-              ← 入力ページへ
-            </Link>
+    <main className="min-h-screen w-full bg-[linear-gradient(180deg,#020617_0%,#030712_100%)] px-4 py-6 text-white sm:px-6 sm:py-8">
+      <div className="mx-auto max-w-4xl rounded-[28px] border border-white/10 bg-[rgba(2,6,23,0.80)] p-4 shadow-[0_20px_60px_rgba(0,0,0,0.35)] sm:p-6">
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-extrabold tracking-[-0.04em]">管理ページ</h1>
+            <p className="mt-2 text-white/55">運転手・車両・地点・区間運賃を管理します</p>
           </div>
+
+          <Link
+            href="/"
+            className="inline-flex min-h-[52px] items-center justify-center rounded-[18px] border border-white/10 bg-white/5 px-5 text-base font-bold transition hover:bg-white/10"
+          >
+            入力ページへ戻る
+          </Link>
         </div>
 
-        <div style={styles.card}>
-          <h2 style={{ ...styles.sectionTitle, fontSize: 26, marginBottom: 18 }}>設定</h2>
-
-          <div style={styles.block}>
-            <div>
-              <div style={styles.label}>パスワード</div>
+        <div className="space-y-6">
+          <section className="rounded-[24px] border border-white/10 bg-white/[0.03] p-4">
+            <h2 className="mb-4 text-2xl font-extrabold">運転手を追加</h2>
+            <div className="flex flex-col gap-3 sm:flex-row">
               <input
-                type="password"
-                value={adminKey}
-                onChange={(e) => setAdminKey(e.target.value)}
-                placeholder="ADMIN_KEY"
-                style={styles.input}
+                value={newDriverName}
+                onChange={(e) => setNewDriverName(e.target.value)}
+                placeholder="運転手名"
+                className="min-h-[56px] flex-1 rounded-[18px] border border-white/10 bg-black/20 px-4 text-xl text-white outline-none"
               />
-            </div>
-
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               <button
                 type="button"
-                style={styles.secondaryBtn}
-                onClick={reloadAll}
-                disabled={loading}
-              >
-                再読み込み
-              </button>
-            </div>
-
-            {!!statusText && <div style={styles.status}>{statusText}</div>}
-          </div>
-
-          <hr style={styles.hr} />
-
-          <div style={styles.block}>
-            <h3 style={styles.sectionTitle}>運転手を追加</h3>
-            <input
-              type="text"
-              value={driverName}
-              onChange={(e) => setDriverName(e.target.value)}
-              placeholder="運転手名"
-              style={styles.input}
-            />
-            <div>
-              <button
-                type="button"
-                style={styles.primaryBtn}
-                onClick={handleAddDriver}
-                disabled={loading}
+                onClick={addDriver}
+                className="min-h-[56px] rounded-[18px] border border-blue-400/30 bg-[#3158d8] px-5 text-lg font-bold"
               >
                 追加
               </button>
             </div>
-          </div>
+          </section>
 
-          <hr style={styles.hr} />
-
-          <div style={styles.block}>
-            <h3 style={styles.sectionTitle}>車両を追加</h3>
-            <input
-              type="text"
-              value={vehicleName}
-              onChange={(e) => setVehicleName(e.target.value)}
-              placeholder="車両名"
-              style={styles.input}
-            />
-            <div>
+          <section className="rounded-[24px] border border-white/10 bg-white/[0.03] p-4">
+            <h2 className="mb-4 text-2xl font-extrabold">車両を追加</h2>
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <input
+                value={newVehicleName}
+                onChange={(e) => setNewVehicleName(e.target.value)}
+                placeholder="車両名"
+                className="min-h-[56px] flex-1 rounded-[18px] border border-white/10 bg-black/20 px-4 text-xl text-white outline-none"
+              />
               <button
                 type="button"
-                style={styles.primaryBtn}
-                onClick={handleAddVehicle}
-                disabled={loading}
+                onClick={addVehicle}
+                className="min-h-[56px] rounded-[18px] border border-blue-400/30 bg-[#3158d8] px-5 text-lg font-bold"
               >
                 追加
               </button>
             </div>
-          </div>
+          </section>
 
-          <hr style={styles.hr} />
-
-          <div style={styles.block}>
-            <h3 style={styles.sectionTitle}>地点を追加</h3>
-            <input
-              type="text"
-              value={locationName}
-              onChange={(e) => setLocationName(e.target.value)}
-              placeholder="地点名"
-              style={styles.input}
-            />
-            <div>
+          <section className="rounded-[24px] border border-white/10 bg-white/[0.03] p-4">
+            <h2 className="mb-4 text-2xl font-extrabold">地点を追加</h2>
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <input
+                value={newLocationName}
+                onChange={(e) => setNewLocationName(e.target.value)}
+                placeholder="地点名"
+                className="min-h-[56px] flex-1 rounded-[18px] border border-white/10 bg-black/20 px-4 text-xl text-white outline-none"
+              />
               <button
                 type="button"
-                style={styles.primaryBtn}
-                onClick={handleAddLocation}
-                disabled={loading}
+                onClick={addLocation}
+                className="min-h-[56px] rounded-[18px] border border-blue-400/30 bg-[#3158d8] px-5 text-lg font-bold"
               >
                 追加
               </button>
             </div>
-          </div>
+          </section>
 
-          <hr style={styles.hr} />
+          <section className="rounded-[24px] border border-white/10 bg-white/[0.03] p-4">
+            <h2 className="mb-4 text-2xl font-extrabold">区間運賃を追加 / 更新</h2>
+            <div className="space-y-3">
+              <select
+                value={fareFromId}
+                onChange={(e) => setFareFromId(e.target.value ? Number(e.target.value) : "")}
+                className="min-h-[56px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 text-xl text-white outline-none"
+              >
+                <option value="">出発地を選択</option>
+                {locations.map((l) => (
+                  <option key={`fare-from-${l.id}`} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
+              </select>
 
-          <div style={styles.block}>
-            <h3 style={styles.sectionTitle}>区間運賃を追加 / 更新</h3>
+              <select
+                value={fareToId}
+                onChange={(e) => setFareToId(e.target.value ? Number(e.target.value) : "")}
+                className="min-h-[56px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 text-xl text-white outline-none"
+              >
+                <option value="">到着地を選択</option>
+                {locations.map((l) => (
+                  <option key={`fare-to-${l.id}`} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
+              </select>
 
-            <select
-              value={fareFromId}
-              onChange={(e) => setFareFromId(e.target.value)}
-              style={styles.select}
-            >
-              <option value="">出発地を選択</option>
-              {locations.map((loc) => (
-                <option key={loc.id} value={loc.id}>
-                  {loc.name}
-                </option>
-              ))}
-            </select>
+              <input
+                value={fareAmount}
+                onChange={(e) => setFareAmount(onlyDigits(e.target.value))}
+                placeholder="金額（円）"
+                className="min-h-[56px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 text-xl text-white outline-none"
+              />
 
-            <select
-              value={fareToId}
-              onChange={(e) => setFareToId(e.target.value)}
-              style={styles.select}
-            >
-              <option value="">到着地を選択</option>
-              {locations.map((loc) => (
-                <option key={loc.id} value={loc.id}>
-                  {loc.name}
-                </option>
-              ))}
-            </select>
-
-            <input
-              type="number"
-              min="0"
-              step="1"
-              value={fareAmount}
-              onChange={(e) => setFareAmount(e.target.value)}
-              placeholder="金額（円）"
-              style={styles.input}
-            />
-
-            <div>
               <button
                 type="button"
-                style={styles.primaryBtn}
-                onClick={handleUpsertFare}
-                disabled={loading}
+                onClick={addOrUpdateFare}
+                className="min-h-[56px] rounded-[18px] border border-blue-400/30 bg-[#3158d8] px-5 text-lg font-bold"
               >
                 追加 / 更新
               </button>
             </div>
-          </div>
+          </section>
 
-          <hr style={styles.hr} />
-
-          <div style={styles.block}>
-            <h3 style={styles.sectionTitle}>区間距離を追加 / 更新</h3>
-
-            <select
-              value={distanceFromId}
-              onChange={(e) => setDistanceFromId(e.target.value)}
-              style={styles.select}
-            >
-              <option value="">出発地を選択</option>
-              {locations.map((loc) => (
-                <option key={loc.id} value={loc.id}>
-                  {loc.name}
-                </option>
+          <ToggleCard
+            title="運転手一覧"
+            open={openDrivers}
+            onToggle={() => setOpenDrivers((v) => !v)}
+          >
+            <div className="space-y-3">
+              {drivers.map((d) => (
+                <RowCard
+                  key={`driver-${d.id}`}
+                  label={d.name}
+                  onDelete={() => deleteDriver(d.id)}
+                />
               ))}
-            </select>
+            </div>
+          </ToggleCard>
 
-            <select
-              value={distanceToId}
-              onChange={(e) => setDistanceToId(e.target.value)}
-              style={styles.select}
-            >
-              <option value="">到着地を選択</option>
-              {locations.map((loc) => (
-                <option key={loc.id} value={loc.id}>
-                  {loc.name}
-                </option>
+          <ToggleCard
+            title="車両一覧"
+            open={openVehicles}
+            onToggle={() => setOpenVehicles((v) => !v)}
+          >
+            <div className="space-y-3">
+              {vehicles.map((v) => (
+                <RowCard
+                  key={`vehicle-${v.id}`}
+                  label={v.name}
+                  onDelete={() => deleteVehicle(v.id)}
+                />
               ))}
-            </select>
-
-            <input
-              type="number"
-              min="0"
-              step="0.1"
-              value={distanceKm}
-              onChange={(e) => setDistanceKm(e.target.value)}
-              placeholder="距離（km）"
-              style={styles.input}
-            />
-
-            <div>
-              <button
-                type="button"
-                style={styles.primaryBtn}
-                onClick={handleUpsertRouteDistance}
-                disabled={loading}
-              >
-                追加 / 更新
-              </button>
             </div>
+          </ToggleCard>
 
-            <div style={styles.helper}>
-              片方向だけ登録しても、入力ページ側では逆方向も同じ距離として扱う想定。
+          <ToggleCard
+            title="地点一覧"
+            open={openLocations}
+            onToggle={() => setOpenLocations((v) => !v)}
+          >
+            <div className="space-y-3">
+              {locations.map((l) => (
+                <RowCard
+                  key={`location-${l.id}`}
+                  label={l.name}
+                  onDelete={() => deleteLocation(l.id)}
+                />
+              ))}
             </div>
-          </div>
+          </ToggleCard>
 
-          <hr style={styles.hr} />
-
-          <div style={{ display: "grid", gap: 12, width: "100%" }}>
-            <button
-              type="button"
-              style={styles.collapsibleBtn}
-              onClick={() => setDriversOpen((v) => !v)}
-            >
-              <span style={{ fontWeight: 900, fontSize: 18 }}>運転手一覧</span>
-              <span style={{ opacity: 0.72 }}>{driversOpen ? "閉じる" : "開く"}</span>
-            </button>
-            {driversOpen && (
-              <div style={styles.itemList}>
-                {renderSimpleList(drivers, handleDeleteDriver, "まだ運転手はありません")}
-              </div>
-            )}
-
-            <button
-              type="button"
-              style={styles.collapsibleBtn}
-              onClick={() => setVehiclesOpen((v) => !v)}
-            >
-              <span style={{ fontWeight: 900, fontSize: 18 }}>車両一覧</span>
-              <span style={{ opacity: 0.72 }}>{vehiclesOpen ? "閉じる" : "開く"}</span>
-            </button>
-            {vehiclesOpen && (
-              <div style={styles.itemList}>
-                {renderSimpleList(vehicles, handleDeleteVehicle, "まだ車両はありません")}
-              </div>
-            )}
-
-            <button
-              type="button"
-              style={styles.collapsibleBtn}
-              onClick={() => setLocationsOpen((v) => !v)}
-            >
-              <span style={{ fontWeight: 900, fontSize: 18 }}>地点一覧</span>
-              <span style={{ opacity: 0.72 }}>{locationsOpen ? "閉じる" : "開く"}</span>
-            </button>
-            {locationsOpen && (
-              <div style={styles.itemList}>
-                {locations.length === 0 ? (
-                  <div style={styles.emptyCard}>
-                    <div style={styles.itemTitle}>まだ地点はありません</div>
-                  </div>
-                ) : (
-                  locations.map((item) => (
-                    <div key={item.id} style={styles.itemCard}>
-                      <div style={styles.itemMeta}>
-                        <div style={styles.itemTitle}>{item.name}</div>
-                        <div style={styles.itemSub}>
-                          ID: {item.id}
-                          {item.kind ? ` / 種別: ${item.kind}` : ""}
-                        </div>
-                      </div>
-
-                      <button
-                        style={styles.dangerBtn}
-                        onClick={() => handleDeleteLocation(item.id)}
-                        type="button"
-                      >
-                        削除
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-
-            <button
-              type="button"
-              style={styles.collapsibleBtn}
-              onClick={() => setFaresOpen((v) => !v)}
-            >
-              <span style={{ fontWeight: 900, fontSize: 18 }}>区間運賃一覧</span>
-              <span style={{ opacity: 0.72 }}>{faresOpen ? "閉じる" : "開く"}</span>
-            </button>
-            {faresOpen && (
-              <div style={styles.itemList}>
-                {fares.length === 0 ? (
-                  <div style={styles.emptyCard}>
-                    <div style={styles.itemTitle}>まだ区間運賃はありません</div>
-                  </div>
-                ) : (
-                  fares.map((row) => (
-                    <div key={row.id} style={styles.itemCard}>
-                      <div style={styles.itemMeta}>
-                        <div style={styles.itemTitle}>
-                          {locationNameMap.get(row.from_id) ?? row.from_id} →{" "}
-                          {locationNameMap.get(row.to_id) ?? row.to_id}
-                        </div>
-                        <div style={styles.itemSub}>
-                          {row.amount_yen} 円 / ID: {row.id}
-                        </div>
-                      </div>
-
-                      <button
-                        style={styles.dangerBtn}
-                        onClick={() => handleDeleteFare(row.id)}
-                        type="button"
-                      >
-                        削除
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-
-            <button
-              type="button"
-              style={styles.collapsibleBtn}
-              onClick={() => setDistancesOpen((v) => !v)}
-            >
-              <span style={{ fontWeight: 900, fontSize: 18 }}>距離相場一覧</span>
-              <span style={{ opacity: 0.72 }}>{distancesOpen ? "閉じる" : "開く"}</span>
-            </button>
-            {distancesOpen && (
-              <div style={styles.itemList}>
-                {routeDistances.length === 0 ? (
-                  <div style={styles.emptyCard}>
-                    <div style={styles.itemTitle}>まだ距離相場はありません</div>
-                  </div>
-                ) : (
-                  routeDistances.map((row) => (
-                    <div key={row.id} style={styles.itemCard}>
-                      <div style={styles.itemMeta}>
-                        <div style={styles.itemTitle}>
-                          {row.from_location?.name ??
-                            locationNameMap.get(row.from_location_id) ??
-                            row.from_location_id}{" "}
-                          →{" "}
-                          {row.to_location?.name ??
-                            locationNameMap.get(row.to_location_id) ??
-                            row.to_location_id}
-                        </div>
-                        <div style={styles.itemSub}>
-                          {row.distance_km} km / ID: {row.id}
-                        </div>
-                      </div>
-
-                      <button
-                        style={styles.dangerBtn}
-                        onClick={() => handleDeleteRouteDistance(row.id)}
-                        type="button"
-                      >
-                        削除
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
+          <ToggleCard
+            title="区間運賃一覧"
+            open={openFares}
+            onToggle={() => setOpenFares((v) => !v)}
+          >
+            <div className="space-y-3">
+              {fareRowsForView.map((f, idx) => (
+                <RowCard
+                  key={`fare-${f.from_id}-${f.to_id}-${idx}`}
+                  label={`${locationNameMap.get(f.from_id) ?? f.from_id} → ${locationNameMap.get(f.to_id) ?? f.to_id} / ${f.amount_yen}円`}
+                  onDelete={() => deleteFare(f.from_id, f.to_id)}
+                />
+              ))}
+            </div>
+          </ToggleCard>
         </div>
+
+        {loading ? <div className="mt-6 text-white/65">読込中...</div> : null}
+        {status ? <div className="mt-6 whitespace-pre-wrap text-white/80">{status}</div> : null}
       </div>
+    </main>
+  );
+}
+
+function ToggleCard({
+  title,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-[24px] border border-white/10 bg-white/[0.03] p-4">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center justify-between text-left"
+      >
+        <span className="text-2xl font-extrabold">{title}</span>
+        <span className="text-lg text-white/70">{open ? "閉じる" : "開く"}</span>
+      </button>
+      {open ? <div className="mt-4">{children}</div> : null}
+    </section>
+  );
+}
+
+function RowCard({
+  label,
+  onDelete,
+}: {
+  label: string;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-[18px] border border-white/10 bg-black/20 px-4 py-3">
+      <div className="text-lg text-white">{label}</div>
+      <button
+        type="button"
+        onClick={onDelete}
+        className="min-h-[42px] rounded-[14px] border border-red-400/30 bg-red-500/15 px-4 text-sm font-bold text-red-300"
+      >
+        削除
+      </button>
     </div>
   );
+}
+
+function onlyDigits(s: string) {
+  return (s ?? "").replace(/[^\d]/g, "");
 }
