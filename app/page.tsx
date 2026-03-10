@@ -55,8 +55,8 @@ type FlowPayload = {
   "金額（円）": number | "";
 
   "距離（始）": number | "";
-　"距離（終）": asCell(finalArrival?.odo ?? null) as number | "",
-  "距離（始）〜到着１": number | "";
+　"距離（終）": number | "";
+　"距離（始）〜到着１": number | "";
   "距離（到着１〜到着２）": number | "";
   "距離（到着２〜到着３）": number | "";
   "距離（到着３〜到着４）": number | "";
@@ -758,6 +758,7 @@ export default function Page() {
         "金額（円）": asCell(amountToSave) as number | "",
 
         "距離（始）": asCell(departOdo) as number | "",
+        "距離（終）": asCell(finalArrival?.odo ?? null) as number | "",
         "距離（始）〜到着１": asCell(s1) as number | "",
         "距離（到着１〜到着２）": asCell(s2) as number | "",
         "距離（到着２〜到着３）": asCell(s3) as number | "",
