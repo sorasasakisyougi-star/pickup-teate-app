@@ -37,6 +37,8 @@ type ArrivalInput = {
 };
 
 type FlowPayload = {
+  ExcelPath: string;
+
   日付: string;
   運転者: string;
   車両: string;
@@ -55,8 +57,8 @@ type FlowPayload = {
   "金額（円）": number | "";
 
   "距離（始）": number | "";
-　"距離（終）": number | "";
-　"距離（始）〜到着１": number | "";
+  "距離（終）": number | "";
+  "距離（始）〜到着１": number | "";
   "距離（到着１〜到着２）": number | "";
   "距離（到着２〜到着３）": number | "";
   "距離（到着３〜到着４）": number | "";
@@ -102,22 +104,42 @@ function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
 
+function getJstParts(date: Date) {
+  const parts = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+
+  const pick = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((p) => p.type === type)?.value ?? "";
+
+  return {
+    year: pick("year"),
+    month: pick("month"),
+    day: pick("day"),
+    hour: pick("hour"),
+    minute: pick("minute"),
+  };
+}
+
 function formatReportTimeJa(date: Date) {
-  const y = date.getFullYear() % 100;
-  const m = date.getMonth() + 1;
-  const d = date.getDate();
-  const hh = date.getHours();
-  const mm = pad2(date.getMinutes());
-  return `${y}年${m}月${d}日${hh}時${mm}分（自動）`;
+  const { year, month, day, hour, minute } = getJstParts(date);
+  return `${Number(year) % 100}年${Number(month)}月${Number(day)}日${Number(hour)}時${minute}分（自動）`;
 }
 
 function formatDateTimeForExcel(date: Date) {
-  const y = date.getFullYear();
-  const m = date.getMonth() + 1;
-  const d = date.getDate();
-  const hh = pad2(date.getHours());
-  const mm = pad2(date.getMinutes());
-  return `${y}/${m}/${d} ${hh}:${mm}`;
+  const { year, month, day, hour, minute } = getJstParts(date);
+  return `${Number(year)}/${Number(month)}/${Number(day)} ${hour}:${minute}`;
+}
+
+function buildExcelPathForJst(date: Date) {
+  const { year, month } = getJstParts(date);
+  return `/べじむ - General/雇用/送迎/2026年送迎記録表/送迎記録_${year}年${month}月.xlsx`;
 }
 
 function onlyAsciiDigitsFromAnyWidth(s: string) {
@@ -671,7 +693,10 @@ export default function Page() {
     distanceInvalid,
   ]);
 
-  const canSave = useMemo(() => missingLabels.length === 0 && !isSaving, [missingLabels, isSaving]);
+  const canSave = useMemo(
+    () => missingLabels.length === 0 && !isSaving,
+    [missingLabels, isSaving]
+  );
 
   async function onSave() {
     if (isSaving) return;
@@ -688,6 +713,7 @@ export default function Page() {
       const nowAtSave = new Date();
       const reportAtIso = nowAtSave.toISOString();
       const reportAtExcel = formatDateTimeForExcel(nowAtSave);
+      const excelPath = buildExcelPathForJst(nowAtSave);
       const amountToSave = mode === "bus" ? 2000 : (computedAmountYen as number);
 
       let depart_photo_path: string | null = null;
@@ -740,6 +766,8 @@ export default function Page() {
       const [s1, s2, s3, s4, s5, s6, s7, s8] = segmentDistances;
 
       const flowPayload: FlowPayload = {
+        ExcelPath: excelPath,
+
         日付: reportAtExcel,
         運転者: driverName,
         車両: vehicleName,
@@ -790,7 +818,8 @@ export default function Page() {
       try {
         await postToFlow(flowPayload);
         setStatus("保存しました");
-      } catch {
+      } catch (e: any) {
+        console.error("[Power Automate send error]", e, flowPayload);
         setStatus("保存しました（Power Automate送信は失敗）");
       }
 
