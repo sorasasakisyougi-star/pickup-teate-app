@@ -139,7 +139,18 @@ function formatDateTimeForExcel(date: Date) {
 
 function buildExcelPathForJst(date: Date) {
   const { year, month } = getJstParts(date);
-  return `/べじむ - General/雇用/送迎/2026年送迎記録表/送迎記録_${year}年${month}月.xlsx`;
+  const ym = `${year}-${month}`;
+
+  const pathMap: Record<string, string> = {
+    "2026-03": "/General/雇用/送迎/2026年送迎記録表/送迎３月自動反映.xlsx",
+    "2026-04": "/General/雇用/送迎/2026年送迎記録表/送迎４月自動反映.xlsx",
+  };
+
+  const path = pathMap[ym];
+  if (!path) {
+    throw new Error(`対象月の送迎Excelが未登録です: ${ym}`);
+  }
+  return path;
 }
 
 function onlyAsciiDigitsFromAnyWidth(s: string) {
