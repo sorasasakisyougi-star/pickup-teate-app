@@ -1,0 +1,6 @@
+title,company_name,location,salary,source_site,source_url,judgment,final_score,rule_score,ai_score,summary,fetched_at,has_dormitory,welcome_inexperienced
+酪農牧場での搾乳および仔牛の世話,北海道帯広牧場,北海道 帯広市,250000,AgriNaviScraper,https://www.agri-navi.com/jobdetail/33682,通過,180,80,100,寮完備で未経験歓迎、北海道の好条件求人です。,2026-03-18T09:00:00Z,1,1
+DJファーム 酪農・肉牛スタッフ,DJファーム,北海道 中頓別町,220000,AgriNaviScraper,https://www.agri-navi.com/jobdetail/12345,通過,150,70,80,未経験歓迎の酪農求人。寮についての記載あり。,2026-03-18T09:10:00Z,1,1
+大規模トマト農園での収穫・栽培管理,さっぽろアグリ農園,北海道 札幌市,200000,AgreenScraper,https://www.agreen.jp/job/111,保留,90,50,40,寮の有無が不明確なため保留としています。,2026-03-18T09:20:00Z,0,1
+ふらのメロンの栽培スタッフ,ふらのメロンファーム,北海道 富良野市,210000,NoukaOshigotoScraper,https://www.nouka-oshigoto.com/job/222,通過,160,80,80,北海道のメロン栽培求人。条件に合致しています。,2026-03-18T09:30:00Z,1,0
+上川エリアの農業機械オペレーター,上川アグリマシン,北海道 旭川市,280000,NougyouJobScraper,https://agrijob.jp/job/333,除外,40,20,20,短期バイトのため除外判定となりました。,2026-03-18T09:40:00Z,0,0

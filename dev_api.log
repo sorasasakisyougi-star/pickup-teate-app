@@ -1,0 +1,14 @@
+
+> pickup-allowance-app@0.1.0 dev
+> next dev
+
+⚠ Port 3000 is in use by process 5894
+65591, using available port 3001 instead.
+▲ Next.js 16.1.6 (Turbopack)
+- Local:         http://localhost:3001
+- Network:       http://192.168.11.211:3001
+
+✓ Starting...
+⨯ Unable to acquire lock at /Users/sasakisora/.gemini/antigravity/playground/pickup-teate-app/.next/dev/lock, is another instance of next dev running?
+  Suggestion: If you intended to restart next dev, terminate the other process, and then try again.
+[?25h

@@ -1,0 +1,3 @@
+title,company_name,location,salary,source_site,source_url,judgment,final_score,rule_score,ai_score,summary,is_new,fetched_at,has_dormitory,welcome_inexperienced
+"CSVインポートテスト: 高時給農作業","アグリインポートファーム","北海道 岩見沢市",250000,"IndeedScraper","http://example.com/csv1","通過",160,80,80,"高時給かつ条件良好",true,"2026-03-18T00:00:00Z",1,1
+"CSVインポートテスト: 牧場スタッフ","北海道牧場","北海道",180000,"NougyouJobScraper","http://example.com/csv2","保留",70,40,30,"情報不足",false,"2026-03-18T00:00:00Z",0,1

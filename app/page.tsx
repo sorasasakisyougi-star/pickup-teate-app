@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { normalizeUploadImage } from "@/lib/imageUtils";
 
 type DriverRow = { id: number; name: string };
 type VehicleRow = { id: number; name: string };
@@ -31,10 +30,6 @@ type PickupOrderInsert = {
 type ArrivalInput = {
   locationId: number | null;
   odo: number | null;
-  photoFile: File | null;
-  photoPreview: string | null;
-  photoUploadedUrl: string | null;
-  ocrDone: boolean;
 };
 
 type FlowPayload = {
@@ -87,23 +82,9 @@ type FlowPayload = {
   到着写真URL到着８: string;
 };
 
-type GoogleOcrResponse = {
-  ok: boolean;
-  rawText?: string;
-  normalizedText?: string;
-  candidates?: string[];
-  bestCandidate?: string | null;
-  error?: string;
-};
-
-const BUCKET = "order-photos";
 const DIFF_LIMIT_KM = 100;
 const MAX_ARRIVALS = 8;
 const MASTER_UPDATED_KEY = "pickup_masters_updated_at";
-
-function pad2(n: number) {
-  return String(n).padStart(2, "0");
-}
 
 function getJstParts(date: Date) {
   const parts = new Intl.DateTimeFormat("ja-JP", {
@@ -182,42 +163,6 @@ function sumSegs(values: Array<number | "">): number | "" {
   return nums.reduce((a, b) => a + b, 0);
 }
 
-function emptyArrival(): ArrivalInput {
-  return {
-    locationId: null,
-    odo: null,
-    photoFile: null,
-    photoPreview: null,
-    photoUploadedUrl: null,
-    ocrDone: false,
-  };
-}
-
-function pickBestCandidateFromList(cands: string[]) {
-  const clean = (cands ?? [])
-    .map((s) => String(s).replace(/[^\d]/g, ""))
-    .filter(Boolean);
-
-  if (!clean.length) return null;
-
-  const preferred = clean.filter((s) => s.length >= 5 && s.length <= 7);
-  const pool = preferred.length ? preferred : clean;
-
-  const score = (s: string) => {
-    const n = s.length;
-    let sc = 0;
-    if (n === 6) sc += 100;
-    else if (n === 5 || n === 7) sc += 80;
-    else if (n === 4 || n === 8) sc += 40;
-    else sc += 1;
-    if (s.startsWith("0")) sc -= 5;
-    sc += Math.min(new Set(s.split("")).size, 6);
-    return sc;
-  };
-
-  return pool.sort((a, b) => score(b) - score(a))[0];
-}
-
 async function readJsonOrThrow(res: Response) {
   const text = await res.text();
   if (!res.ok) {
@@ -227,11 +172,12 @@ async function readJsonOrThrow(res: Response) {
   return JSON.parse(text);
 }
 
-function normalizeItems<T>(data: any): T[] {
+function normalizeItems<T>(data: unknown): T[] {
   if (!data) return [];
   if (Array.isArray(data)) return data as T[];
-  if (Array.isArray(data.items)) return data.items as T[];
-  if (Array.isArray(data.data)) return data.data as T[];
+  const obj = data as Record<string, unknown>;
+  if (Array.isArray(obj.items)) return obj.items as T[];
+  if (Array.isArray(obj.data)) return obj.data as T[];
   return [];
 }
 
@@ -259,60 +205,11 @@ function getFareAmount(fromId: number | null, toId: number | null, fares: FareRo
   return null;
 }
 
-async function cropMeterArea(file: File): Promise<Blob> {
-  const img = document.createElement("img");
-  img.src = URL.createObjectURL(file);
-
-  await new Promise<void>((resolve, reject) => {
-    img.onload = () => resolve();
-    img.onerror = () => reject(new Error("画像読み込みに失敗"));
-  });
-
-  const W = img.naturalWidth;
-  const H = img.naturalHeight;
-  const left = Math.floor(W * 0.18);
-  const top = Math.floor(H * 0.48);
-  const width = Math.floor(W * 0.64);
-  const height = Math.floor(H * 0.34);
-
-  const canvas = document.createElement("canvas");
-  canvas.width = 1600;
-  canvas.height = Math.floor((1600 * height) / width);
-
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("canvasが使えません");
-
-  ctx.filter = "grayscale(1) contrast(1.45) brightness(1.1)";
-  ctx.drawImage(img, left, top, width, height, 0, 0, canvas.width, canvas.height);
-
-  URL.revokeObjectURL(img.src);
-
-  const blob: Blob = await new Promise((resolve) =>
-    canvas.toBlob((b) => resolve(b as Blob), "image/jpeg", 0.95)
-  );
-
-  return blob;
-}
-
-async function callGoogleOcr(imageFile: File): Promise<GoogleOcrResponse> {
-  const fd = new FormData();
-  fd.append("image", imageFile);
-
-  const res = await fetch("/api/ocr/google", { method: "POST", body: fd });
-  const text = await res.text();
-
-  let j: any = null;
-  try {
-    j = text ? JSON.parse(text) : null;
-  } catch {
-    j = null;
-  }
-
-  if (!res.ok) {
-    return { ok: false, error: j?.error || text || `HTTP ${res.status}` };
-  }
-
-  return (j ?? { ok: false, error: "empty response" }) as GoogleOcrResponse;
+function emptyArrival(): ArrivalInput {
+  return {
+    locationId: null,
+    odo: null,
+  };
 }
 
 export default function Page() {
@@ -334,19 +231,14 @@ export default function Page() {
   );
 
   const [departOdo, setDepartOdo] = useState<number | null>(null);
-  const [departPhoto, setDepartPhoto] = useState<File | null>(null);
-  const [departPreview, setDepartPreview] = useState<string | null>(null);
 
   const [status, setStatus] = useState("");
   const [isSaving, setIsSaving] = useState(false);
-  const [ocrBusyKey, setOcrBusyKey] = useState<string | null>(null);
   const [note, setNote] = useState("");
 
   const [now, setNow] = useState<Date>(() => new Date());
   const [mastersLoading, setMastersLoading] = useState(false);
 
-  const departFileRef = useRef<HTMLInputElement | null>(null);
-  const arrivalFileRefs = useRef<Array<HTMLInputElement | null>>([]);
   const lastReloadAtRef = useRef(0);
   const lastSeenMasterUpdateRef = useRef("");
 
@@ -470,7 +362,10 @@ export default function Page() {
     return m;
   }, [locations]);
 
-  const idToName = (id: number | null) => (id == null ? "" : locMap.get(id) ?? String(id));
+  const idToName = useCallback(
+    (id: number | null) => (id == null ? "" : locMap.get(id) ?? String(id)),
+    [locMap]
+  );
   const visibleArrivals = arrivals.slice(0, arrivalCount);
 
   const routeChain = useMemo(() => {
@@ -528,15 +423,7 @@ export default function Page() {
     return false;
   }, [arrivalCount, arrivals, departOdo, totalDistanceKm]);
 
-  useEffect(() => {
-    if (!departPhoto) {
-      setDepartPreview(null);
-      return;
-    }
-    const url = URL.createObjectURL(departPhoto);
-    setDepartPreview(url);
-    return () => URL.revokeObjectURL(url);
-  }, [departPhoto]);
+
 
   function updateArrival(index: number, patch: Partial<ArrivalInput>) {
     setArrivals((prev) => {
@@ -554,103 +441,13 @@ export default function Page() {
     setArrivals((prev) => {
       const next = [...prev];
       const idx = Math.max(0, arrivalCount - 1);
-      const old = next[idx];
-      if (old?.photoPreview) URL.revokeObjectURL(old.photoPreview);
       next[idx] = emptyArrival();
       return next;
     });
     setArrivalCount((c) => Math.max(1, c - 1));
   }
 
-  async function runOcrGoogleStrong(file: File, target: "depart" | number) {
-    const key = target === "depart" ? "depart" : `arrive-${target}`;
-    if (ocrBusyKey) return;
 
-    setOcrBusyKey(key);
-
-    const applyOdo = (num: number) => {
-      if (target === "depart") setDepartOdo(num);
-      else updateArrival(target, { odo: num });
-    };
-
-    const markDone = () => {
-      if (target === "depart") return;
-      updateArrival(target, { ocrDone: true });
-    };
-
-    try {
-      const croppedBlob = await cropMeterArea(file);
-      const croppedFile = new File([croppedBlob], "meter-crop.jpg", { type: "image/jpeg" });
-
-      let r = await callGoogleOcr(croppedFile);
-      let cands = [r.bestCandidate ?? "", ...(r.candidates ?? [])].filter(Boolean);
-      let best = pickBestCandidateFromList(cands);
-
-      if (!best) {
-        r = await callGoogleOcr(file);
-        cands = [r.bestCandidate ?? "", ...(r.candidates ?? [])].filter(Boolean);
-        best = pickBestCandidateFromList(cands);
-      }
-
-      if (!best) {
-        markDone();
-        return;
-      }
-
-      const num = Number(best);
-      if (!Number.isFinite(num)) {
-        markDone();
-        return;
-      }
-
-      applyOdo(num);
-      markDone();
-    } catch {
-      markDone();
-    } finally {
-      setOcrBusyKey(null);
-    }
-  }
-
-  useEffect(() => {
-    if (!departPhoto) return;
-    runOcrGoogleStrong(departPhoto, "depart");
-  }, [departPhoto]);
-
-  useEffect(() => {
-    for (let i = 0; i < arrivalCount; i++) {
-      const a = arrivals[i];
-      if (a.photoFile && !a.ocrDone) {
-        runOcrGoogleStrong(a.photoFile, i);
-        break;
-      }
-    }
-  }, [arrivals, arrivalCount]);
-
-  async function uploadOnePhoto(file: File, prefix: string) {
-    if (!supabase) throw new Error("Supabase is not configured.");
-    const ext = file.name.split(".").pop() || "jpg";
-    const filename = `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-    const path = filename;
-
-    try {
-      const up = await supabase.storage.from(BUCKET).upload(path, file, {
-        upsert: true,
-        contentType: file.type || "image/jpeg",
-      });
-      
-      if (up.error) {
-        console.error(`[uploadOnePhoto] error:`, up.error, file.name, file.size, file.type);
-        throw new Error(`写真保存失敗 (${up.error.message || "詳細不明"})`);
-      }
-
-      const pub = supabase.storage.from(BUCKET).getPublicUrl(path);
-      return { path, url: pub.data?.publicUrl ?? null };
-    } catch (err: unknown) {
-      console.error(`[uploadOnePhoto] caught error:`, file.name, file.size, file.type, err);
-      throw err;
-    }
-  }
 
   async function postToFlow(payload: FlowPayload) {
     const res = await fetch("/api/powerautomate", {
@@ -660,7 +457,7 @@ export default function Page() {
     });
 
     const text = await res.text();
-    let j: any = null;
+    let j: unknown = null;
     try {
       j = text ? JSON.parse(text) : null;
     } catch {
@@ -672,8 +469,9 @@ export default function Page() {
       throw new Error(`Power Automate送信失敗: ${res.status} ${detail}`);
     }
 
-    if (j && j.ok === false) {
-      throw new Error(j.error || JSON.stringify(j));
+    const jobj = j as Record<string, unknown> | null;
+    if (jobj && jobj.ok === false) {
+      throw new Error(String(jobj.error || JSON.stringify(jobj)));
     }
   }
 
@@ -692,11 +490,9 @@ export default function Page() {
     }
 
     if (departOdo == null) miss.push("ODO(出発)");
-    if (!departPhoto) miss.push("写真(出発)");
 
     for (let i = 0; i < arrivalCount; i++) {
       if (arrivals[i].odo == null) miss.push(`ODO(到着${i + 1})`);
-      if (!arrivals[i].photoFile) miss.push(`写真(到着${i + 1})`);
     }
 
     if (distanceInvalid) miss.push("走行距離");
@@ -711,7 +507,6 @@ export default function Page() {
     arrivals,
     computedAmountYen,
     departOdo,
-    departPhoto,
     distanceInvalid,
   ]);
 
@@ -738,30 +533,6 @@ export default function Page() {
       const reportAtExcel = formatDateTimeForExcel(nowAtSave);
       const excelPath = buildExcelPathForJst(nowAtSave);
       const amountToSave = mode === "bus" ? 2000 : (computedAmountYen as number);
-
-      let depart_photo_path: string | null = null;
-      let depart_photo_url: string | null = null;
-      if (departPhoto) {
-        const r = await uploadOnePhoto(departPhoto, "depart");
-        depart_photo_path = r.path;
-        depart_photo_url = r.url;
-      }
-
-      const arrivalPhotoUrls: string[] = Array(MAX_ARRIVALS).fill("");
-      let lastArrivalPhotoPath: string | null = null;
-      let lastArrivalPhotoUrl: string | null = null;
-
-      for (let i = 0; i < MAX_ARRIVALS; i++) {
-        const a = arrivals[i];
-        if (!a.photoFile) continue;
-        const uploaded = await uploadOnePhoto(a.photoFile, `arrive_${i + 1}`);
-        arrivalPhotoUrls[i] = uploaded.url ?? "";
-        if (i === arrivalCount - 1) {
-          lastArrivalPhotoPath = uploaded.path;
-          lastArrivalPhotoUrl = uploaded.url ?? null;
-        }
-      }
-
       const finalArrival = arrivals[arrivalCount - 1];
       const payloadDb: PickupOrderInsert = {
         driver_name: driverName,
@@ -773,10 +544,10 @@ export default function Page() {
         report_at: reportAtIso,
         depart_odometer_km: departOdo,
         arrive_odometer_km: finalArrival?.odo ?? null,
-        depart_photo_path,
-        depart_photo_url,
-        arrive_photo_path: lastArrivalPhotoPath,
-        arrive_photo_url: lastArrivalPhotoUrl,
+        depart_photo_path: null,
+        depart_photo_url: null,
+        arrive_photo_path: null,
+        arrive_photo_url: null,
       };
 
       const ins = await supabase.from("pickup_orders").insert(payloadDb);
@@ -827,21 +598,21 @@ export default function Page() {
 
         備考: note.trim(),
 
-        出発写真URL: depart_photo_url ?? "",
-        到着写真URL到着１: arrivalPhotoUrls[0] ?? "",
-        到着写真URL到着２: arrivalPhotoUrls[1] ?? "",
-        到着写真URL到着３: arrivalPhotoUrls[2] ?? "",
-        到着写真URL到着４: arrivalPhotoUrls[3] ?? "",
-        到着写真URL到着５: arrivalPhotoUrls[4] ?? "",
-        到着写真URL到着６: arrivalPhotoUrls[5] ?? "",
-        到着写真URL到着７: arrivalPhotoUrls[6] ?? "",
-        到着写真URL到着８: arrivalPhotoUrls[7] ?? "",
+        出発写真URL: "",
+        到着写真URL到着１: "",
+        到着写真URL到着２: "",
+        到着写真URL到着３: "",
+        到着写真URL到着４: "",
+        到着写真URL到着５: "",
+        到着写真URL到着６: "",
+        到着写真URL到着７: "",
+        到着写真URL到着８: "",
       };
 
       try {
         await postToFlow(flowPayload);
         setStatus("保存しました");
-      } catch (e: any) {
+      } catch (e: unknown) {
         console.error("[Power Automate send error]", e, flowPayload);
         setStatus("保存しました（Power Automate送信は失敗）");
       }
@@ -849,11 +620,10 @@ export default function Page() {
       setFromId(null);
       setArrivalCount(1);
       setArrivals(Array.from({ length: MAX_ARRIVALS }, () => emptyArrival()));
-      setDepartPhoto(null);
       setDepartOdo(null);
       setNote("");
-    } catch (e: any) {
-      setStatus(e?.message ?? "保存でエラー");
+    } catch (e: unknown) {
+      setStatus(e instanceof Error ? e.message : "保存でエラー");
     } finally {
       setIsSaving(false);
     }
@@ -1038,56 +808,7 @@ export default function Page() {
               className="min-h-[58px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 text-xl text-white outline-none placeholder:text-white/30 sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:text-2xl"
             />
 
-            <div className="pt-3 text-xl text-white/65 sm:text-2xl">写真(出発)</div>
-            <div>
-              <input
-                ref={departFileRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={async (e) => {
-                  try {
-                    const f = e.target.files?.[0] ?? null;
-                    if (!f) {
-                      setDepartPhoto(null);
-                      e.currentTarget.value = "";
-                      return;
-                    }
-                    setStatus("写真処理中...");
-                    const processed = await normalizeUploadImage(f);
-                    setDepartPhoto(processed);
-                    setStatus("");
-                  } catch (err: unknown) {
-                    console.error("depart photo normalize error:", err);
-                    setStatus(`写真処理失敗: ${err.message}`);
-                    setDepartPhoto(null);
-                  } finally {
-                    e.currentTarget.value = "";
-                  }
-                }}
-              />
-              <div className="flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => departFileRef.current?.click()}
-                  className="min-h-[52px] rounded-[18px] border border-white/10 bg-white/5 px-4 text-base font-bold transition hover:bg-white/10 sm:min-h-[58px] sm:rounded-[20px] sm:px-5 sm:text-xl"
-                >
-                  写真を選ぶ
-                </button>
-                <span className="text-base text-white/65 sm:text-xl">
-                  {departPhoto ? departPhoto.name : "未選択"}
-                </span>
-              </div>
-              {departPreview ? (
-                <div className="mt-4">
-                  <img
-                    src={departPreview}
-                    alt="depart preview"
-                    className="max-h-52 rounded-[18px] border border-white/10 sm:rounded-[20px]"
-                  />
-                </div>
-              ) : null}
-            </div>
+
           </div>
 
           <div className="mt-6 space-y-4 sm:mt-7 sm:space-y-5">
@@ -1142,77 +863,7 @@ export default function Page() {
                       </div>
                     </div>
 
-                    <div className="pt-3 text-xl text-white/65 sm:text-2xl">写真</div>
-                    <div>
-                      <input
-                        ref={(el) => {
-                          arrivalFileRefs.current[idx] = el;
-                        }}
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={async (e) => {
-                          try {
-                            const f = e.target.files?.[0] ?? null;
 
-                            if (a.photoPreview) URL.revokeObjectURL(a.photoPreview);
-
-                            if (!f) {
-                              updateArrival(idx, {
-                                photoFile: null,
-                                photoPreview: null,
-                                ocrDone: false,
-                              });
-                              e.currentTarget.value = "";
-                              return;
-                            }
-
-                            setStatus("写真処理中...");
-                            const processed = await normalizeUploadImage(f);
-                            const preview = URL.createObjectURL(processed);
-
-                            updateArrival(idx, {
-                              photoFile: processed,
-                              photoPreview: preview,
-                              photoUploadedUrl: null,
-                              ocrDone: false,
-                            });
-                            setStatus("");
-                          } catch (err: unknown) {
-                            console.error(`arrival photo normalize error (idx ${idx}):`, err);
-                            setStatus(`写真処理失敗: ${err.message}`);
-                            updateArrival(idx, {
-                              photoFile: null,
-                              photoPreview: null,
-                              ocrDone: false,
-                            });
-                          } finally {
-                            e.currentTarget.value = "";
-                          }
-                        }}
-                      />
-                      <div className="flex flex-wrap items-center gap-3">
-                        <button
-                          type="button"
-                          onClick={() => arrivalFileRefs.current[idx]?.click()}
-                          className="min-h-[52px] rounded-[18px] border border-white/10 bg-white/5 px-4 text-base font-bold transition hover:bg-white/10 sm:min-h-[58px] sm:rounded-[20px] sm:px-5 sm:text-xl"
-                        >
-                          写真を選ぶ
-                        </button>
-                        <span className="text-base text-white/65 sm:text-xl">
-                          {a.photoFile ? a.photoFile.name : "未選択"}
-                        </span>
-                      </div>
-                      {a.photoPreview ? (
-                        <div className="mt-4">
-                          <img
-                            src={a.photoPreview}
-                            alt={`arrival-${idx + 1}-preview`}
-                            className="max-h-52 rounded-[18px] border border-white/10 sm:rounded-[20px]"
-                          />
-                        </div>
-                      ) : null}
-                    </div>
                   </div>
                 </div>
               );
