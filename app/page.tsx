@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { normalizeUploadImage } from "@/lib/imageUtils";
 
 type DriverRow = { id: number; name: string };
 type VehicleRow = { id: number; name: string };
@@ -627,18 +628,28 @@ export default function Page() {
   }, [arrivals, arrivalCount]);
 
   async function uploadOnePhoto(file: File, prefix: string) {
+    if (!supabase) throw new Error("Supabase is not configured.");
     const ext = file.name.split(".").pop() || "jpg";
     const filename = `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
     const path = filename;
 
-    const up = await supabase.storage.from(BUCKET).upload(path, file, {
-      upsert: true,
-      contentType: file.type || "image/jpeg",
-    });
-    if (up.error) throw new Error("写真アップロードに失敗");
+    try {
+      const up = await supabase.storage.from(BUCKET).upload(path, file, {
+        upsert: true,
+        contentType: file.type || "image/jpeg",
+      });
+      
+      if (up.error) {
+        console.error(`[uploadOnePhoto] error:`, up.error, file.name, file.size, file.type);
+        throw new Error(`写真保存失敗 (${up.error.message || "詳細不明"})`);
+      }
 
-    const pub = supabase.storage.from(BUCKET).getPublicUrl(path);
-    return { path, url: pub.data?.publicUrl ?? null };
+      const pub = supabase.storage.from(BUCKET).getPublicUrl(path);
+      return { path, url: pub.data?.publicUrl ?? null };
+    } catch (err: unknown) {
+      console.error(`[uploadOnePhoto] caught error:`, file.name, file.size, file.type, err);
+      throw err;
+    }
   }
 
   async function postToFlow(payload: FlowPayload) {
@@ -710,6 +721,7 @@ export default function Page() {
   );
 
   async function onSave() {
+    if (!supabase) return;
     if (isSaving) return;
     setStatus("");
 
@@ -845,6 +857,25 @@ export default function Page() {
     } finally {
       setIsSaving(false);
     }
+  }
+
+  if (!supabase) {
+    return (
+      <main className="min-h-screen w-full flex flex-col items-center pt-20 px-4 bg-[radial-gradient(circle_at_top,rgba(24,80,180,0.18),transparent_28%),linear-gradient(180deg,#020817_0%,#030712_100%)]">
+        <div className="w-full max-w-xl rounded-[24px] border border-red-500/30 bg-[rgba(2,6,23,0.80)] p-6 sm:p-8 shadow-[0_16px_50px_rgba(0,0,0,0.30)] backdrop-blur-[12px] text-white">
+          <h1 className="text-xl font-bold text-red-400 sm:text-2xl mb-4 text-center sm:text-left">
+            Supabase環境変数が未設定です
+          </h1>
+          <p className="mb-4 text-white/80 text-[15px] sm:text-base leading-relaxed">
+            このアプリを利用するには、ルートディレクトリに <code className="bg-black/30 border border-white/10 px-1.5 py-0.5 rounded text-blue-300">.env.local</code> を作成して以下の項目を設定してください。
+          </p>
+          <div className="bg-black/40 rounded-[12px] p-4 font-mono text-sm text-blue-200 border border-white/10 break-all overflow-hidden relative">
+            NEXT_PUBLIC_SUPABASE_URL=...<br/>
+            NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+          </div>
+        </div>
+      </main>
+    );
   }
 
   return (
@@ -1014,10 +1045,25 @@ export default function Page() {
                 type="file"
                 accept="image/*"
                 className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0] ?? null;
-                  setDepartPhoto(f);
-                  e.currentTarget.value = "";
+                onChange={async (e) => {
+                  try {
+                    const f = e.target.files?.[0] ?? null;
+                    if (!f) {
+                      setDepartPhoto(null);
+                      e.currentTarget.value = "";
+                      return;
+                    }
+                    setStatus("写真処理中...");
+                    const processed = await normalizeUploadImage(f);
+                    setDepartPhoto(processed);
+                    setStatus("");
+                  } catch (err: unknown) {
+                    console.error("depart photo normalize error:", err);
+                    setStatus(`写真処理失敗: ${err.message}`);
+                    setDepartPhoto(null);
+                  } finally {
+                    e.currentTarget.value = "";
+                  }
                 }}
               />
               <div className="flex flex-wrap items-center gap-3">
@@ -1105,30 +1151,44 @@ export default function Page() {
                         type="file"
                         accept="image/*"
                         className="hidden"
-                        onChange={(e) => {
-                          const f = e.target.files?.[0] ?? null;
+                        onChange={async (e) => {
+                          try {
+                            const f = e.target.files?.[0] ?? null;
 
-                          if (a.photoPreview) URL.revokeObjectURL(a.photoPreview);
+                            if (a.photoPreview) URL.revokeObjectURL(a.photoPreview);
 
-                          if (!f) {
+                            if (!f) {
+                              updateArrival(idx, {
+                                photoFile: null,
+                                photoPreview: null,
+                                ocrDone: false,
+                              });
+                              e.currentTarget.value = "";
+                              return;
+                            }
+
+                            setStatus("写真処理中...");
+                            const processed = await normalizeUploadImage(f);
+                            const preview = URL.createObjectURL(processed);
+
+                            updateArrival(idx, {
+                              photoFile: processed,
+                              photoPreview: preview,
+                              photoUploadedUrl: null,
+                              ocrDone: false,
+                            });
+                            setStatus("");
+                          } catch (err: unknown) {
+                            console.error(`arrival photo normalize error (idx ${idx}):`, err);
+                            setStatus(`写真処理失敗: ${err.message}`);
                             updateArrival(idx, {
                               photoFile: null,
                               photoPreview: null,
                               ocrDone: false,
                             });
+                          } finally {
                             e.currentTarget.value = "";
-                            return;
                           }
-
-                          const preview = URL.createObjectURL(f);
-                          updateArrival(idx, {
-                            photoFile: f,
-                            photoPreview: preview,
-                            photoUploadedUrl: null,
-                            ocrDone: false,
-                          });
-
-                          e.currentTarget.value = "";
                         }}
                       />
                       <div className="flex flex-wrap items-center gap-3">
