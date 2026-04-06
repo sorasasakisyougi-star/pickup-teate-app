@@ -1,8 +1,8 @@
 // PhotoUploadService.ts
 // 「本体保存成功後」に、この関数を呼び出して非同期で写真を送信します。
-// ローカルPCのAPIエンドポイントへ送信するため、Vercelリソースを消費しません。
+// 接続先は社内PC内で立ち上げた Tunnel (ngrok等) 経由の公開URLを想定しています。
 
-const LOCAL_API_URL = process.env.NEXT_PUBLIC_PHOTO_API_URL || "http://localhost:3001/api/photos";
+const LOCAL_API_URL = process.env.NEXT_PUBLIC_PHOTO_API_URL;
 
 export interface PhotoUploadParams {
   orderId: string;
@@ -11,6 +11,11 @@ export interface PhotoUploadParams {
 }
 
 export async function uploadPhotoAsync(params: PhotoUploadParams): Promise<boolean> {
+  if (!LOCAL_API_URL) {
+    console.warn("[PhotoUpload] NEXT_PUBLIC_PHOTO_API_URL が設定されていないため、写真送信をスキップします");
+    return false;
+  }
+
   try {
     const formData = new FormData();
     formData.append("order_id", params.orderId);

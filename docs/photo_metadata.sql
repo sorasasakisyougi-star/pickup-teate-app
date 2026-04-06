@@ -19,7 +19,15 @@ ON photo_metadata FOR ALL
 TO authenticated 
 USING (true) WITH CHECK (true);
 
+-- 【注意: セキュリティについて】
+-- 下記の設定は「誰でも自由に未認証で書き込める」設定です。
+-- 写真メタ情報の外部更新API（Power Automate等やWebhook）が認証情報を持たない場合のみ、
+-- セキュリティの脆弱性（DDoS等の不正レコード追加リスク）を承知の上で暫定的に許可するものです。
+-- 本来は、anon に対する INSERT 許可は外し、サービスキー付きの社内PC（または専用API）からのみ更新させるのが正本です。
+
+/*
 CREATE POLICY "Enable insert for anon" 
 ON photo_metadata FOR INSERT 
 TO anon 
 WITH CHECK (true);
+*/

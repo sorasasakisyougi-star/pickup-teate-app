@@ -624,16 +624,16 @@ export default function Page() {
 
       if (newRecordId) {
         const capturedDepart = departPhotoFile;
-        const capturedArrivals = arrivals.slice(0, arrivalCount).map(a => a.photoFile);
-        
-        Promise.all([
-          capturedDepart ? uploadPhotoAsync({ orderId: newRecordId, photoKind: 'depart', file: capturedDepart }) : Promise.resolve(true),
-          ...capturedArrivals.map((f, i) => f ? uploadPhotoAsync({ orderId: newRecordId, photoKind: `arrival_${i + 1}`, file: f }) : Promise.resolve(true))
-        ]).then(results => {
-          if (results.some(r => !r)) {
-            setStatus(prev => prev + "\n⚠️ 一部の写真が送信できませんでした（通信環境の良い場所で再送してください）");
-          }
-        }).catch(() => {});
+        // 写真送信先APIがセットされていれば1枚だけ送信
+        if (capturedDepart && process.env.NEXT_PUBLIC_PHOTO_API_URL) {
+          uploadPhotoAsync({ orderId: newRecordId, photoKind: 'depart', file: capturedDepart })
+            .then(success => {
+              if (!success) {
+                setStatus(prev => prev + "\n⚠️ 写真が送信できませんでした（後で再送できます）");
+              }
+            })
+            .catch(() => {});
+        }
       }
 
       setFromId(null);
@@ -829,12 +829,16 @@ export default function Page() {
             />
 
             <div className="pt-3 text-xl text-white/65 sm:text-2xl">写真(出発) <span className="text-sm border border-white/30 rounded px-1 ml-1 bg-white/5">任意</span></div>
-            <input
-               type="file"
-               accept="image/*"
-               onChange={(e) => setDepartPhotoFile(e.target.files?.[0] || null)}
-               className="min-h-[58px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 py-3 text-lg text-white/70 outline-none sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:py-4 sm:text-xl file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-bold file:bg-white/10 file:text-white hover:file:bg-white/20"
-            />
+            {process.env.NEXT_PUBLIC_PHOTO_API_URL ? (
+              <input
+                 type="file"
+                 accept="image/*"
+                 onChange={(e) => setDepartPhotoFile(e.target.files?.[0] || null)}
+                 className="min-h-[58px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 py-3 text-lg text-white/70 outline-none sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:py-4 sm:text-xl file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-bold file:bg-white/10 file:text-white hover:file:bg-white/20"
+              />
+            ) : (
+              <div className="text-red-400 mt-2">⚠️ 写真送信先未設定</div>
+            )}
           </div>
 
           <div className="mt-6 space-y-4 sm:mt-7 sm:space-y-5">
@@ -889,13 +893,6 @@ export default function Page() {
                       </div>
                     </div>
 
-                    <div className="pt-3 text-xl text-white/65 sm:text-2xl">写真(到着) <span className="text-sm border border-white/30 rounded px-1 ml-1 bg-white/5">任意</span></div>
-                    <input
-                       type="file"
-                       accept="image/*"
-                       onChange={(e) => updateArrival(idx, { photoFile: e.target.files?.[0] || null })}
-                       className="min-h-[58px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 py-3 text-lg text-white/70 outline-none sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:py-4 sm:text-xl file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-bold file:bg-white/10 file:text-white hover:file:bg-white/20"
-                    />
                   </div>
                 </div>
               );
