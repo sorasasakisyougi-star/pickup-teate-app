@@ -27,6 +27,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(400).json({ ok: false, error: "name is required" });
       }
 
+      const existing = await supabaseAdmin
+        .from("locations")
+        .select("id")
+        .eq("name", name)
+        .maybeSingle();
+
+      if (existing.error) {
+        return res.status(500).json({ ok: false, error: existing.error.message });
+      }
+
+      if (existing.data) {
+        return res.status(409).json({ ok: false, error: "同名の地点が既に存在します" });
+      }
+
       const { data, error } = await supabaseAdmin
         .from("locations")
         .insert({ name, kind })

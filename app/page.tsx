@@ -123,18 +123,9 @@ function formatDateTimeForExcel(date: Date) {
 
 function buildExcelPathForJst(date: Date) {
   const { year, month } = getJstParts(date);
-  const ym = `${year}-${month}`;
+  const monthNumber = Number(month);
 
-  const pathMap: Record<string, string> = {
-    "2026-03": "/General/雇用/送迎/2026年送迎記録表/送迎３月自動反映.xlsx",
-    "2026-04": "/General/雇用/送迎/2026年送迎記録表/送迎４月自動反映.xlsx",
-  };
-
-  const path = pathMap[ym];
-  if (!path) {
-    throw new Error(`対象月の送迎Excelが未登録です: ${ym}`);
-  }
-  return path;
+  return `/General/雇用/送迎/${year}年送迎記録表/送迎${monthNumber}月自動反映.xlsx`;
 }
 
 function onlyAsciiDigitsFromAnyWidth(s: string) {
@@ -245,6 +236,7 @@ export default function Page() {
 
   const lastReloadAtRef = useRef(0);
   const lastSeenMasterUpdateRef = useRef("");
+  const mastersLoadingRef = useRef(false);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 10_000);
@@ -254,10 +246,11 @@ export default function Page() {
   const reloadMasters = useCallback(
     async (force = false) => {
       const nowMs = Date.now();
-      if (!force && mastersLoading) return;
+      if (!force && mastersLoadingRef.current) return;
       if (!force && nowMs - lastReloadAtRef.current < 800) return;
 
       lastReloadAtRef.current = nowMs;
+      mastersLoadingRef.current = true;
       setMastersLoading(true);
 
       try {
@@ -313,10 +306,11 @@ export default function Page() {
         console.error("[reloadMasters]", e);
         setLoadErr(e instanceof Error ? e.message : "マスタ読込失敗");
       } finally {
+        mastersLoadingRef.current = false;
         setMastersLoading(false);
       }
     },
-    [mastersLoading]
+    []
   );
 
   useEffect(() => {

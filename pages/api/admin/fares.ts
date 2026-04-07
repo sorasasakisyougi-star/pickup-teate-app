@@ -24,7 +24,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const to_id = Number(req.body?.to_id);
       const amount_yen = Number(req.body?.amount_yen);
 
-      if (!from_id || !to_id || !Number.isFinite(amount_yen)) {
+      if (!from_id || !to_id || !Number.isFinite(amount_yen) || amount_yen <= 0) {
         return res.status(400).json({ ok: false, error: "invalid payload" });
       }
 
