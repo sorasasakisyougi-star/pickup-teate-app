@@ -13,6 +13,15 @@ function getAdminKeyStorage() {
   return localStorage.getItem("pickup_admin_key") ?? "";
 }
 
+function setAdminKeyStorage(value: string) {
+  if (typeof window === "undefined") return;
+  if (value) {
+    localStorage.setItem("pickup_admin_key", value);
+    return;
+  }
+  localStorage.removeItem("pickup_admin_key");
+}
+
 async function readJson(res: Response) {
   const text = await res.text();
   let data: any = null;
@@ -40,6 +49,7 @@ export default function AdminPage() {
   const [authenticated, setAuthenticated] = useState(false);
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
+  const [authChecking, setAuthChecking] = useState(true);
 
   const [drivers, setDrivers] = useState<DriverRow[]>([]);
   const [vehicles, setVehicles] = useState<VehicleRow[]>([]);
@@ -58,14 +68,6 @@ export default function AdminPage() {
   const [openVehicles, setOpenVehicles] = useState(false);
   const [openLocations, setOpenLocations] = useState(false);
   const [openFares, setOpenFares] = useState(false);
-
-  useEffect(() => {
-    const saved = getAdminKeyStorage();
-    if (saved) {
-      setAdminKey(saved);
-      setAuthenticated(true);
-    }
-  }, []);
 
   async function apiGet(path: string) {
     const res = await fetch(`${path}?ts=${Date.now()}`, { cache: "no-store" });
@@ -95,6 +97,87 @@ export default function AdminPage() {
     });
     return readJson(res);
   }
+
+  function resetAdminKey(message = "保存済みの管理キーを消しました。再入力してください。") {
+    setAdminKeyStorage("");
+    setAdminKey("");
+    setAuthenticated(false);
+    setStatus(message);
+  }
+
+  async function validateAdminKey(candidate: string) {
+    const trimmed = candidate.trim();
+    if (!trimmed) {
+      return { ok: false, message: "ADMIN_KEYを入力してください" };
+    }
+
+    const res = await fetch("/api/admin/drivers", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-admin-key": trimmed,
+      },
+      body: JSON.stringify({}),
+    });
+
+    const text = await res.text();
+    let data: any = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = null;
+    }
+
+    if (res.status === 400) {
+      return { ok: true, message: "" };
+    }
+
+    if (res.status === 401) {
+      return {
+        ok: false,
+        message: "管理キーが無効です。保存済みキーを消して、正しいキーを再入力してください。",
+      };
+    }
+
+    return {
+      ok: res.ok,
+      message: data?.error || text || `HTTP ${res.status}`,
+    };
+  }
+
+  function handleAdminKeyError(message?: string) {
+    resetAdminKey(
+      message || "管理キーが無効です。保存済みキーを消して、正しいキーを再入力してください。"
+    );
+  }
+
+  function describeMutationError(error: any, fallback: string) {
+    const message = error?.message ?? fallback;
+    if (message === "Unauthorized") {
+      handleAdminKeyError();
+      return "管理キーが無効です。再入力してください。";
+    }
+    return message;
+  }
+
+  useEffect(() => {
+    const saved = getAdminKeyStorage().trim();
+    if (!saved) {
+      setAuthChecking(false);
+      return;
+    }
+
+    setAdminKey(saved);
+    void (async () => {
+      const result = await validateAdminKey(saved);
+      if (result.ok) {
+        setAuthenticated(true);
+      } else {
+        handleAdminKeyError(result.message);
+      }
+      setAuthChecking(false);
+    })();
+  }, []);
 
   async function reloadAll() {
     setLoading(true);
@@ -147,14 +230,34 @@ export default function AdminPage() {
     });
   }, [fares, locationNameMap]);
 
-  function saveAdminKey() {
-    if (!adminKey.trim()) {
+  async function saveAdminKey() {
+    const trimmed = adminKey.trim();
+    if (!trimmed) {
       setStatus("ADMIN_KEYを入力してください");
       return;
     }
-    localStorage.setItem("pickup_admin_key", adminKey.trim());
-    setAuthenticated(true);
-    setStatus("管理キーを保存しました");
+
+    setLoading(true);
+    setStatus("");
+    try {
+      const result = await validateAdminKey(trimmed);
+      if (!result.ok) {
+        setStatus(result.message || "管理キーを確認できませんでした");
+        setAuthenticated(false);
+        return;
+      }
+
+      setAdminKeyStorage(trimmed);
+      setAdminKey(trimmed);
+      setAuthenticated(true);
+      setStatus("管理キーを保存しました");
+    } catch (e: any) {
+      setStatus(e?.message ?? "管理キー確認に失敗しました");
+      setAuthenticated(false);
+    } finally {
+      setLoading(false);
+      setAuthChecking(false);
+    }
   }
 
   async function addDriver() {
@@ -167,7 +270,7 @@ export default function AdminPage() {
       setStatus("運転手を追加しました");
       await reloadAll();
     } catch (e: any) {
-      setStatus(e?.message ?? "追加失敗");
+      setStatus(describeMutationError(e, "追加失敗"));
     }
   }
 
@@ -179,7 +282,7 @@ export default function AdminPage() {
       setStatus("運転手を削除しました");
       await reloadAll();
     } catch (e: any) {
-      setStatus(e?.message ?? "削除失敗");
+      setStatus(describeMutationError(e, "削除失敗"));
     }
   }
 
@@ -193,7 +296,7 @@ export default function AdminPage() {
       setStatus("車両を追加しました");
       await reloadAll();
     } catch (e: any) {
-      setStatus(e?.message ?? "追加失敗");
+      setStatus(describeMutationError(e, "追加失敗"));
     }
   }
 
@@ -205,7 +308,7 @@ export default function AdminPage() {
       setStatus("車両を削除しました");
       await reloadAll();
     } catch (e: any) {
-      setStatus(e?.message ?? "削除失敗");
+      setStatus(describeMutationError(e, "削除失敗"));
     }
   }
 
@@ -219,7 +322,7 @@ export default function AdminPage() {
       setStatus("地点を追加しました");
       await reloadAll();
     } catch (e: any) {
-      setStatus(e?.message ?? "追加失敗");
+      setStatus(describeMutationError(e, "追加失敗"));
     }
   }
 
@@ -231,7 +334,7 @@ export default function AdminPage() {
       setStatus("地点を削除しました");
       await reloadAll();
     } catch (e: any) {
-      setStatus(e?.message ?? "削除失敗");
+      setStatus(describeMutationError(e, "削除失敗"));
     }
   }
 
@@ -251,7 +354,7 @@ export default function AdminPage() {
       setStatus("区間運賃を追加 / 更新しました");
       await reloadAll();
     } catch (e: any) {
-      setStatus(e?.message ?? "追加 / 更新失敗");
+      setStatus(describeMutationError(e, "追加 / 更新失敗"));
     }
   }
 
@@ -263,8 +366,19 @@ export default function AdminPage() {
       setStatus("区間運賃を削除しました");
       await reloadAll();
     } catch (e: any) {
-      setStatus(e?.message ?? "削除失敗");
+      setStatus(describeMutationError(e, "削除失敗"));
     }
+  }
+
+  if (authChecking) {
+    return (
+      <main className="min-h-screen w-full bg-[linear-gradient(180deg,#020617_0%,#030712_100%)] px-4 py-8 text-white">
+        <div className="mx-auto max-w-xl rounded-[28px] border border-white/10 bg-[rgba(2,6,23,0.80)] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
+          <h1 className="text-3xl font-extrabold tracking-[-0.04em]">管理ページ</h1>
+          <p className="mt-4 text-white/70">保存済みの管理キーを確認しています...</p>
+        </div>
+      </main>
+    );
   }
 
   if (!authenticated) {
@@ -285,9 +399,18 @@ export default function AdminPage() {
           <button
             type="button"
             onClick={saveAdminKey}
+            disabled={loading}
             className="mt-4 min-h-[58px] w-full rounded-[20px] border border-blue-400/30 bg-[#20357b] text-xl font-bold"
           >
-            入る
+            {loading ? "確認中..." : "入る"}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => resetAdminKey()}
+            className="mt-3 min-h-[52px] w-full rounded-[18px] border border-white/10 bg-white/5 text-base font-bold text-white/85"
+          >
+            管理キーを消す / 再入力
           </button>
 
           <div className="mt-4 flex flex-col gap-3">
@@ -319,6 +442,13 @@ export default function AdminPage() {
           </div>
 
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => resetAdminKey()}
+              className="inline-flex min-h-[52px] items-center justify-center rounded-[18px] border border-amber-400/30 bg-amber-500/10 px-5 text-base font-bold text-amber-100 transition hover:bg-amber-500/20"
+            >
+              管理キーを消す / 再入力
+            </button>
             <Link
               href="http://localhost:3000/admin-portal"
               className="inline-flex min-h-[52px] items-center justify-center gap-2 rounded-[18px] border border-white/10 bg-[rgba(15,23,42,0.8)] px-5 text-base font-bold text-white transition hover:-translate-y-[2px] hover:bg-[rgba(30,41,59,0.9)] backdrop-blur-md"
