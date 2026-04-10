@@ -2,8 +2,11 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { supabase } from "@/lib/supabaseClient";
 import { uploadPhotoAsync } from "./components/PhotoUploadService";
+import {
+  classifyPhotoDeleteResultForRollback,
+  type PhotoDeleteResult,
+} from "./lib/photoRollbackContract.ts";
 
 type DriverRow = { id: number; name: string };
 type VehicleRow = { id: number; name: string };
@@ -12,20 +15,40 @@ type FareRow = { from_id: number; to_id: number; amount_yen: number };
 
 type Mode = "route" | "bus";
 
-type PickupOrderInsert = {
+type PickupOrderArrivalSaveRequest = {
+  location_id: number | null;
+  odometer_km: number;
+  photo_path: string | null;
+  photo_url: string | null;
+};
+
+type PickupOrderSaveRequest = {
+  mode: Mode;
   driver_name: string;
-  vehicle_name: string | null;
-  is_bus: boolean;
+  vehicle_name: string;
   from_id: number | null;
-  to_id: number | null;
-  amount_yen: number;
-  report_at: string;
-  depart_odometer_km: number | null;
-  arrive_odometer_km: number | null;
+  depart_odometer_km: number;
   depart_photo_path: string | null;
   depart_photo_url: string | null;
-  arrive_photo_path: string | null;
-  arrive_photo_url: string | null;
+  arrivals: PickupOrderArrivalSaveRequest[];
+};
+
+type PickupOrderDeliveryState = "sent" | "pending" | "failed";
+
+type PickupOrderSaveResult = {
+  id: string;
+  delivery?: {
+    state: PickupOrderDeliveryState;
+    error?: string;
+  };
+};
+
+type PickupMastersResponse = {
+  ok: true;
+  drivers: DriverRow[];
+  vehicles: VehicleRow[];
+  locations: LocationRow[];
+  fares: FareRow[];
 };
 
 type ArrivalInput = {
@@ -34,59 +57,20 @@ type ArrivalInput = {
   photoFile?: File | null;
 };
 
-type FlowPayload = {
-  ExcelPath: string;
+type PickupOrderPhotoReference = {
+  photo_path: string | null;
+  photo_url: string | null;
+};
 
-  日付: string;
-  運転者: string;
-  車両: string;
-  出発地: string;
-
-  到着１: string;
-  到着２: string;
-  到着３: string;
-  到着４: string;
-  到着５: string;
-  到着６: string;
-  到着７: string;
-  到着８: string;
-
-  バス: string;
-  "金額（円）": number | "";
-
-  "距離（始）": number | "";
-  "距離（終）": number | "";
-  "距離（始）〜到着１": number | "";
-  "距離（到着１〜到着２）": number | "";
-  "距離（到着２〜到着３）": number | "";
-  "距離（到着３〜到着４）": number | "";
-  "距離（到着４〜到着５）": number | "";
-  "距離（到着５〜到着６）": number | "";
-  "距離（到着６〜到着７）": number | "";
-  "距離（到着７〜到着８）": number | "";
-
-  "総走行距離（km）": number | "";
-  "想定距離（km）": number | "";
-  "超過距離（km）": number | "";
-  距離警告: string;
-  区間警告詳細: string;
-
-  備考: string;
-
-  出発写真URL: string;
-  到着写真URL到着１: string;
-  到着写真URL到着２: string;
-  到着写真URL到着３: string;
-  到着写真URL到着４: string;
-  到着写真URL到着５: string;
-  到着写真URL到着６: string;
-  到着写真URL到着７: string;
-  到着写真URL到着８: string;
+type PickupOrderUploadedPhotoReferences = {
+  depart: PickupOrderPhotoReference;
+  arrivals: PickupOrderPhotoReference[];
 };
 
 const DIFF_LIMIT_KM = 100;
 const MAX_ARRIVALS = 8;
 const MASTER_UPDATED_KEY = "pickup_masters_updated_at";
+const PHOTO_API_URL = process.env.NEXT_PUBLIC_PHOTO_API_URL?.trim() || "/api/photos";
 
 function getJstParts(date: Date) {
   const parts = new Intl.DateTimeFormat("ja-JP", {
@@ -116,29 +100,10 @@ function formatReportTimeJa(date: Date) {
   return `${Number(year) % 100}年${Number(month)}月${Number(day)}日${Number(hour)}時${minute}分（自動）`;
 }
 
-function formatDateTimeForExcel(date: Date) {
-  const { year, month, day, hour, minute } = getJstParts(date);
-  return `${Number(year)}/${Number(month)}/${Number(day)} ${hour}:${minute}`;
-}
-
-function buildExcelPathForJst(date: Date) {
-  const { year, month } = getJstParts(date);
-  const monthNumber = Number(month);
-
-  return `/General/雇用/送迎/${year}年送迎記録表/送迎${monthNumber}月自動反映.xlsx`;
-}
-
 function onlyAsciiDigitsFromAnyWidth(s: string) {
   return (s ?? "")
     .replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
     .replace(/[^\d]/g, "");
-}
-
-function asCell(v: unknown): string | number | "" {
-  if (v == null) return "";
-  if (typeof v === "number") return Number.isFinite(v) ? v : "";
-  const s = String(v).trim();
-  return s === "" ? "" : s;
 }
 
 function calcSeg(from: number | null, to: number | null): number | "" {
@@ -161,29 +126,105 @@ async function readJsonOrThrow(res: Response) {
   if (!res.ok) {
     throw new Error(text || `HTTP ${res.status}`);
   }
-  if (!text) return [];
+  if (!text) {
+    throw new Error("empty response");
+  }
   return JSON.parse(text);
 }
 
-function normalizeItems<T>(data: unknown): T[] {
-  if (!data) return [];
-  if (Array.isArray(data)) return data as T[];
-  const obj = data as Record<string, unknown>;
-  if (Array.isArray(obj.items)) return obj.items as T[];
-  if (Array.isArray(obj.data)) return obj.data as T[];
-  return [];
+function asArrayOrThrow<T>(value: unknown, fieldName: string): T[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`invalid pickup masters response: ${fieldName}`);
+  }
+  return value as T[];
 }
 
-async function fetchAdminList<T>(path: string): Promise<T[]> {
-  const sep = path.includes("?") ? "&" : "?";
-  const res = await fetch(`${path}${sep}ts=${Date.now()}`, {
+async function fetchPickupMasters(): Promise<PickupMastersResponse> {
+  const res = await fetch(`/api/pickup-masters?ts=${Date.now()}`, {
     cache: "no-store",
     headers: {
       "cache-control": "no-store, no-cache, max-age=0, must-revalidate",
       pragma: "no-cache",
     },
   });
-  return normalizeItems<T>(await readJsonOrThrow(res));
+  const data = (await readJsonOrThrow(res)) as Record<string, unknown>;
+  if (data.ok !== true) {
+    throw new Error("マスタ読込失敗");
+  }
+
+  return {
+    ok: true,
+    drivers: asArrayOrThrow<DriverRow>(data.drivers, "drivers"),
+    vehicles: asArrayOrThrow<VehicleRow>(data.vehicles, "vehicles"),
+    locations: asArrayOrThrow<LocationRow>(data.locations, "locations"),
+    fares: asArrayOrThrow<FareRow>(data.fares, "fares"),
+  };
+}
+
+async function savePickupOrder(payload: PickupOrderSaveRequest) {
+  const res = await fetch("/api/pickup-orders", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const text = await res.text();
+  let data: Record<string, unknown> | null = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
+
+  if (!res.ok) {
+    const errorCode = typeof data?.error === "string" ? data.error : "";
+    if (errorCode === "unauthorized") {
+      throw new Error("ログインが必要です");
+    }
+    if (errorCode === "forbidden") {
+      throw new Error("保存権限がありません");
+    }
+    if (errorCode === "forbidden_origin") {
+      throw new Error("保存元の検証に失敗しました");
+    }
+    if (errorCode === "invalid_request") {
+      throw new Error("入力内容を確認してください");
+    }
+    if (errorCode === "master_not_found") {
+      throw new Error("マスタ情報を確認してください");
+    }
+    if (errorCode === "fare_not_found") {
+      throw new Error("料金表を確認してください");
+    }
+    throw new Error("保存でエラー");
+  }
+
+  const id = typeof data?.id === "string" ? data.id : "";
+  if (!id) {
+    throw new Error("保存でエラー");
+  }
+
+  const deliveryRecord =
+    data?.delivery && typeof data.delivery === "object" && !Array.isArray(data.delivery)
+      ? (data.delivery as Record<string, unknown>)
+      : null;
+  const deliveryState: PickupOrderDeliveryState | null =
+    deliveryRecord?.state === "sent" ||
+    deliveryRecord?.state === "pending" ||
+    deliveryRecord?.state === "failed"
+      ? (deliveryRecord.state as PickupOrderDeliveryState)
+      : null;
+  const delivery =
+    deliveryState
+      ? {
+          state: deliveryState,
+          error: typeof deliveryRecord?.error === "string" ? deliveryRecord.error : undefined,
+        }
+      : undefined;
+
+  return { id, delivery } satisfies PickupOrderSaveResult;
 }
 
 function getFareAmount(fromId: number | null, toId: number | null, fares: FareRow[]) {
@@ -204,6 +245,147 @@ function emptyArrival(): ArrivalInput {
     odo: null,
     photoFile: null,
   };
+}
+
+function emptyPhotoReference(): PickupOrderPhotoReference {
+  return {
+    photo_path: null,
+    photo_url: null,
+  };
+}
+
+function collectUploadedPhotoPaths(photoRefs: PickupOrderUploadedPhotoReferences): string[] {
+  const values = [
+    photoRefs.depart.photo_path,
+    ...photoRefs.arrivals.map((arrival) => arrival.photo_path),
+  ];
+  return values.filter((value): value is string => Boolean(value));
+}
+
+async function deleteUploadedPhotosForRollback(photoPaths: string[]): Promise<PhotoDeleteResult> {
+  if (!photoPaths.length) {
+    return {
+      requested_paths: [],
+      deleted_paths: [],
+      failed_paths: [],
+    };
+  }
+
+  const res = await fetch(PHOTO_API_URL, {
+    method: "DELETE",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ photo_paths: photoPaths }),
+  });
+  const bodyText = await res.text();
+
+  let data: Record<string, unknown> | null = null;
+  try {
+    data = bodyText ? (JSON.parse(bodyText) as Record<string, unknown>) : null;
+  } catch {
+    throw new Error("photo_delete_invalid_json");
+  }
+
+  const rollbackResult = classifyPhotoDeleteResultForRollback(data, photoPaths);
+
+  if (!res.ok && rollbackResult.failed_paths.length === 0) {
+    const errorCode = typeof data?.error === "string" ? data.error : "";
+    throw new Error(errorCode || `photo_delete_failed_http_${res.status}`);
+  }
+
+  return rollbackResult;
+}
+
+function toPhotoUploadUserMessage(error: unknown): string {
+  const code = error instanceof Error ? error.message : "";
+
+  if (code.includes("photo_file_too_large")) {
+    return "写真サイズが大きすぎます。8MB以下の画像を選択してください。";
+  }
+  if (code.includes("invalid_photo_content_type")) {
+    return "写真形式が未対応です。JPEG/PNG/WebP/HEIC/HEIF/GIF を使用してください。";
+  }
+  if (code.includes("forbidden_origin")) {
+    return "写真送信元の検証に失敗しました。ページを再読み込みして再試行してください。";
+  }
+  if (code.includes("photo_rollback_incomplete")) {
+    return "写真アップロードに失敗し、写真ロールバックが未完了です。管理者へ連絡してください。";
+  }
+  if (code.includes("photo_rollback_unconfirmed")) {
+    return "写真アップロードに失敗し、写真ロールバック結果を確認できませんでした。管理者へ連絡してください。";
+  }
+  return "写真アップロードに失敗しました。保存されていません。時間をおいて再試行してください。";
+}
+
+async function uploadSelectedPhotoReferences(params: {
+  departFile: File | null;
+  arrivals: ArrivalInput[];
+}): Promise<PickupOrderUploadedPhotoReferences> {
+  const departUpload = params.departFile
+    ? uploadPhotoAsync({
+        photoKind: "depart",
+        file: params.departFile,
+      }).then((uploaded) => ({
+        photo_path: uploaded.photoPath,
+        photo_url: uploaded.photoUrl,
+      }))
+    : Promise.resolve(emptyPhotoReference());
+
+  const arrivalUploads = params.arrivals.map((arrival, index) =>
+    arrival.photoFile
+      ? uploadPhotoAsync({
+          photoKind: `arrival_${index}`,
+          file: arrival.photoFile,
+        }).then((uploaded) => ({
+          photo_path: uploaded.photoPath,
+          photo_url: uploaded.photoUrl,
+        }))
+      : Promise.resolve(emptyPhotoReference()),
+  );
+
+  const settled = await Promise.allSettled([departUpload, ...arrivalUploads]);
+  const rejected = settled.find(
+    (item): item is PromiseRejectedResult => item.status === "rejected",
+  );
+
+  if (rejected) {
+    const uploadedPaths = settled
+      .filter((item): item is PromiseFulfilledResult<PickupOrderPhotoReference> => item.status === "fulfilled")
+      .map((item) => item.value.photo_path)
+      .filter((photoPath): photoPath is string => Boolean(photoPath));
+
+    if (uploadedPaths.length > 0) {
+      try {
+        const rollbackResult = await deleteUploadedPhotosForRollback(uploadedPaths);
+        if (rollbackResult.failed_paths.length > 0) {
+          console.error("[uploadSelectedPhotoReferences] rollback incomplete", {
+            rollbackResult,
+          });
+          throw new Error("photo_rollback_incomplete");
+        }
+      } catch (rollbackError) {
+        if (rollbackError instanceof Error && rollbackError.message === "photo_rollback_incomplete") {
+          throw rollbackError;
+        }
+        console.error("[uploadSelectedPhotoReferences] rollback failed", {
+          rollbackError,
+          uploadedPaths,
+        });
+        throw new Error("photo_rollback_unconfirmed");
+      }
+    }
+
+    throw rejected.reason instanceof Error
+      ? rejected.reason
+      : new Error("photo_upload_failed");
+  }
+
+  const values = settled.map(
+    (item) => (item as PromiseFulfilledResult<PickupOrderPhotoReference>).value,
+  );
+  const [depart, ...arrivals] = values;
+  return { depart, arrivals };
 }
 
 export default function Page() {
@@ -256,12 +438,11 @@ export default function Page() {
       try {
         setLoadErr("");
 
-        const [driversData, vehiclesData, locationsData, faresData] = await Promise.all([
-          fetchAdminList<DriverRow>("/api/admin/drivers"),
-          fetchAdminList<VehicleRow>("/api/admin/vehicles"),
-          fetchAdminList<LocationRow>("/api/admin/locations"),
-          fetchAdminList<FareRow>("/api/admin/fares"),
-        ]);
+        const masters = await fetchPickupMasters();
+        const driversData = masters.drivers;
+        const vehiclesData = masters.vehicles;
+        const locationsData = masters.locations;
+        const faresData = masters.fares;
 
         const sortedDrivers = [...driversData].sort((a, b) =>
           a.name.localeCompare(b.name, "ja")
@@ -445,34 +626,6 @@ export default function Page() {
     setArrivalCount((c) => Math.max(1, c - 1));
   }
 
-
-
-  async function postToFlow(payload: FlowPayload) {
-    const res = await fetch("/api/powerautomate", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    const text = await res.text();
-    let j: unknown = null;
-    try {
-      j = text ? JSON.parse(text) : null;
-    } catch {
-      j = null;
-    }
-
-    if (!res.ok) {
-      const detail = j ? JSON.stringify(j) : text;
-      throw new Error(`Power Automate送信失敗: ${res.status} ${detail}`);
-    }
-
-    const jobj = j as Record<string, unknown> | null;
-    if (jobj && jobj.ok === false) {
-      throw new Error(String(jobj.error || JSON.stringify(jobj)));
-    }
-  }
-
   const missingLabels = useMemo(() => {
     const miss: string[] = [];
 
@@ -514,7 +667,6 @@ export default function Page() {
   );
 
   async function onSave() {
-    if (!supabase) return;
     if (isSaving) return;
     setStatus("");
 
@@ -524,110 +676,64 @@ export default function Page() {
     }
 
     setIsSaving(true);
+    let shouldRollbackUploadedPhotos = false;
+    let uploadedPhotoPathsForRollback: string[] = [];
 
     try {
-      const nowAtSave = new Date();
-      const reportAtIso = nowAtSave.toISOString();
-      const reportAtExcel = formatDateTimeForExcel(nowAtSave);
-      const excelPath = buildExcelPathForJst(nowAtSave);
-      const amountToSave = mode === "bus" ? 2000 : (computedAmountYen as number);
-      const finalArrival = arrivals[arrivalCount - 1];
-      const payloadDb: PickupOrderInsert = {
-        driver_name: driverName,
-        vehicle_name: vehicleName || null,
-        is_bus: mode === "bus",
-        from_id: mode === "bus" ? null : fromId,
-        to_id: mode === "bus" ? null : finalArrival?.locationId ?? null,
-        amount_yen: amountToSave,
-        report_at: reportAtIso,
-        depart_odometer_km: departOdo,
-        arrive_odometer_km: finalArrival?.odo ?? null,
-        depart_photo_path: null,
-        depart_photo_url: null,
-        arrive_photo_path: null,
-        arrive_photo_url: null,
+      const capturedMode = mode;
+      const capturedDriverName = driverName;
+      const capturedVehicleName = vehicleName;
+      const capturedFromId = fromId;
+      const capturedDepartOdo = departOdo as number;
+      const capturedDepartPhotoFile = departPhotoFile;
+      const capturedVisibleArrivals = visibleArrivals.map((arrival) => ({ ...arrival }));
+      const hasSelectedPhotos =
+        Boolean(capturedDepartPhotoFile) ||
+        capturedVisibleArrivals.some((arrival) => Boolean(arrival.photoFile));
+
+      const uploadedPhotoRefs = hasSelectedPhotos
+        ? await uploadSelectedPhotoReferences({
+            departFile: capturedDepartPhotoFile,
+            arrivals: capturedVisibleArrivals,
+          }).catch((error) => {
+            console.error("[onSave] photo upload failed", error);
+            throw new Error(toPhotoUploadUserMessage(error));
+          })
+        : {
+            depart: emptyPhotoReference(),
+            arrivals: capturedVisibleArrivals.map(() => emptyPhotoReference()),
+          };
+      uploadedPhotoPathsForRollback = collectUploadedPhotoPaths(uploadedPhotoRefs);
+      shouldRollbackUploadedPhotos = uploadedPhotoPathsForRollback.length > 0;
+
+      const visibleArrivalPayload = capturedVisibleArrivals.map((arrival, index) => ({
+        location_id: capturedMode === "bus" ? null : arrival.locationId,
+        odometer_km: (arrival.odo ?? null) as number,
+        photo_path: uploadedPhotoRefs.arrivals[index]?.photo_path ?? null,
+        photo_url: uploadedPhotoRefs.arrivals[index]?.photo_url ?? null,
+      }));
+      const payloadForRoute: PickupOrderSaveRequest = {
+        mode: capturedMode,
+        driver_name: capturedDriverName,
+        vehicle_name: capturedVehicleName,
+        from_id: capturedMode === "bus" ? null : capturedFromId,
+        depart_odometer_km: capturedDepartOdo,
+        depart_photo_path: uploadedPhotoRefs.depart.photo_path,
+        depart_photo_url: uploadedPhotoRefs.depart.photo_url,
+        arrivals: visibleArrivalPayload,
       };
 
-      const ins = await supabase.from("pickup_orders").insert(payloadDb).select("id").single();
-      if (ins.error) throw new Error("DB insert失敗");
-      const newRecordId = ins.data?.id;
+      const saved = await savePickupOrder(payloadForRoute);
+      shouldRollbackUploadedPhotos = false;
 
-      const arrivalNames = Array.from({ length: MAX_ARRIVALS }, (_, i) =>
-        i < arrivalCount ? idToName(arrivals[i].locationId) : ""
-      );
-
-      const [s1, s2, s3, s4, s5, s6, s7, s8] = segmentDistances;
-
-      const flowPayload: FlowPayload = {
-        ExcelPath: excelPath,
-
-        日付: reportAtExcel,
-        運転者: driverName,
-        車両: vehicleName,
-        出発地: mode === "bus" ? "" : idToName(fromId),
-
-        到着１: (asCell(arrivalNames[0]) as string) || "",
-        到着２: (asCell(arrivalNames[1]) as string) || "",
-        到着３: (asCell(arrivalNames[2]) as string) || "",
-        到着４: (asCell(arrivalNames[3]) as string) || "",
-        到着５: (asCell(arrivalNames[4]) as string) || "",
-        到着６: (asCell(arrivalNames[5]) as string) || "",
-        到着７: (asCell(arrivalNames[6]) as string) || "",
-        到着８: (asCell(arrivalNames[7]) as string) || "",
-
-        バス: mode === "bus" ? "バス" : "通常ルート",
-        "金額（円）": asCell(amountToSave) as number | "",
-
-        "距離（始）": asCell(departOdo) as number | "",
-        "距離（終）": asCell(finalArrival?.odo ?? null) as number | "",
-        "距離（始）〜到着１": asCell(s1) as number | "",
-        "距離（到着１〜到着２）": asCell(s2) as number | "",
-        "距離（到着２〜到着３）": asCell(s3) as number | "",
-        "距離（到着３〜到着４）": asCell(s4) as number | "",
-        "距離（到着４〜到着５）": asCell(s5) as number | "",
-        "距離（到着５〜到着６）": asCell(s6) as number | "",
-        "距離（到着６〜到着７）": asCell(s7) as number | "",
-        "距離（到着７〜到着８）": asCell(s8) as number | "",
-
-        "総走行距離（km）": asCell(totalDistanceKm) as number | "",
-        "想定距離（km）": "",
-        "超過距離（km）": "",
-        距離警告: "",
-        区間警告詳細: "",
-
-        備考: note.trim(),
-
-        出発写真URL: "",
-        到着写真URL到着１: "",
-        到着写真URL到着２: "",
-        到着写真URL到着３: "",
-        到着写真URL到着４: "",
-        到着写真URL到着５: "",
-        到着写真URL到着６: "",
-        到着写真URL到着７: "",
-        到着写真URL到着８: "",
-      };
-
-      try {
-        await postToFlow(flowPayload);
+      if (saved.delivery?.state === "sent") {
+        setStatus("保存して送信しました");
+      } else if (saved.delivery?.state === "pending") {
+        setStatus("保存しました。送信中です。管理ページで確認してください");
+      } else if (saved.delivery?.state === "failed") {
+        setStatus("保存しました。送信は失敗したため管理ページから再送してください");
+      } else {
         setStatus("保存しました");
-      } catch (e: unknown) {
-        console.error("[Power Automate send error]", e, flowPayload);
-        setStatus("保存しました（Power Automate送信は失敗）");
-      }
-
-      if (newRecordId) {
-        const capturedDepart = departPhotoFile;
-        // 写真送信先APIがセットされていれば1枚だけ送信
-        if (capturedDepart && process.env.NEXT_PUBLIC_PHOTO_API_URL) {
-          uploadPhotoAsync({ orderId: newRecordId, photoKind: 'depart', file: capturedDepart })
-            .then(success => {
-              if (!success) {
-                setStatus(prev => prev + "\n⚠️ 写真が送信できませんでした（後で再送できます）");
-              }
-            })
-            .catch(() => {});
-        }
       }
 
       setFromId(null);
@@ -637,29 +743,37 @@ export default function Page() {
       setDepartPhotoFile(null);
       setNote("");
     } catch (e: unknown) {
+      let rollbackIncompleteMessage: string | null = null;
+
+      if (shouldRollbackUploadedPhotos) {
+        try {
+          const rollbackResult = await deleteUploadedPhotosForRollback(uploadedPhotoPathsForRollback);
+          if (rollbackResult.failed_paths.length > 0) {
+            rollbackIncompleteMessage =
+              "保存は失敗し、写真ロールバックが未完了です。管理者へ連絡してください。";
+            console.error("[onSave] rollback uploaded photos incomplete", {
+              rollbackResult,
+            });
+          }
+        } catch (rollbackError) {
+          console.error("[onSave] rollback uploaded photos failed", {
+            rollbackError,
+            uploadedPhotoPathsForRollback,
+          });
+          rollbackIncompleteMessage =
+            "保存は失敗し、写真ロールバック結果を確認できませんでした。管理者へ連絡してください。";
+        }
+      }
+
+      if (rollbackIncompleteMessage) {
+        setStatus(rollbackIncompleteMessage);
+        return;
+      }
+
       setStatus(e instanceof Error ? e.message : "保存でエラー");
     } finally {
       setIsSaving(false);
     }
-  }
-
-  if (!supabase) {
-    return (
-      <main className="min-h-screen w-full flex flex-col items-center pt-20 px-4 bg-[radial-gradient(circle_at_top,rgba(24,80,180,0.18),transparent_28%),linear-gradient(180deg,#020817_0%,#030712_100%)]">
-        <div className="w-full max-w-xl rounded-[24px] border border-red-500/30 bg-[rgba(2,6,23,0.80)] p-6 sm:p-8 shadow-[0_16px_50px_rgba(0,0,0,0.30)] backdrop-blur-[12px] text-white">
-          <h1 className="text-xl font-bold text-red-400 sm:text-2xl mb-4 text-center sm:text-left">
-            Supabase環境変数が未設定です
-          </h1>
-          <p className="mb-4 text-white/80 text-[15px] sm:text-base leading-relaxed">
-            このアプリを利用するには、ルートディレクトリに <code className="bg-black/30 border border-white/10 px-1.5 py-0.5 rounded text-blue-300">.env.local</code> を作成して以下の項目を設定してください。
-          </p>
-          <div className="bg-black/40 rounded-[12px] p-4 font-mono text-sm text-blue-200 border border-white/10 break-all overflow-hidden relative">
-            NEXT_PUBLIC_SUPABASE_URL=...<br/>
-            NEXT_PUBLIC_SUPABASE_ANON_KEY=...
-          </div>
-        </div>
-      </main>
-    );
   }
 
   return (
@@ -823,16 +937,12 @@ export default function Page() {
             />
 
             <div className="pt-3 text-xl text-white/65 sm:text-2xl">写真(出発) <span className="text-sm border border-white/30 rounded px-1 ml-1 bg-white/5">任意</span></div>
-            {process.env.NEXT_PUBLIC_PHOTO_API_URL ? (
-              <input
-                 type="file"
-                 accept="image/*"
-                 onChange={(e) => setDepartPhotoFile(e.target.files?.[0] || null)}
-                 className="min-h-[58px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 py-3 text-lg text-white/70 outline-none sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:py-4 sm:text-xl file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-bold file:bg-white/10 file:text-white hover:file:bg-white/20"
-              />
-            ) : (
-              <div className="text-red-400 mt-2">⚠️ 写真送信先未設定</div>
-            )}
+            <input
+               type="file"
+               accept="image/*"
+               onChange={(e) => setDepartPhotoFile(e.target.files?.[0] || null)}
+               className="min-h-[58px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 py-3 text-lg text-white/70 outline-none sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:py-4 sm:text-xl file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-bold file:bg-white/10 file:text-white hover:file:bg-white/20"
+            />
           </div>
 
           <div className="mt-6 space-y-4 sm:mt-7 sm:space-y-5">
@@ -886,6 +996,18 @@ export default function Page() {
                         {idx === 0 ? `始→到着1: ${segText}` : `到着${idx}→到着${idx + 1}: ${segText}`}
                       </div>
                     </div>
+
+                    <div className="pt-3 text-xl text-white/65 sm:text-2xl">
+                      写真(到着{idx + 1}) <span className="text-sm border border-white/30 rounded px-1 ml-1 bg-white/5">任意</span>
+                    </div>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) =>
+                        updateArrival(idx, { photoFile: e.target.files?.[0] || null })
+                      }
+                      className="min-h-[58px] w-full rounded-[18px] border border-white/10 bg-black/20 px-4 py-3 text-lg text-white/70 outline-none sm:min-h-[64px] sm:rounded-[24px] sm:px-6 sm:py-4 sm:text-xl file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-bold file:bg-white/10 file:text-white hover:file:bg-white/20"
+                    />
 
                   </div>
                 </div>
