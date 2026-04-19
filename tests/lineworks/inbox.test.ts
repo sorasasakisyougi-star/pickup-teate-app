@@ -4,7 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { insertInbox, getInboxByHash, openInboxDb } from '../../lib/lineworks/inbox';
+import {
+  insertInbox,
+  getInboxByHash,
+  openInboxDb,
+  listPendingInbox,
+  markInboxStatus,
+} from '../../lib/lineworks/inbox';
 
 
 function tempDbPath(): string {
@@ -128,4 +134,99 @@ test('openInboxDb migrates legacy schema (adds message_id column)', () => {
   );
   const row = getInboxByHash('after-mig', dbPath);
   assert.equal(row!.message_id, 'msg-mig');
+});
+
+// --- listPendingInbox / markInboxStatus ------------------------------------
+
+function smallSleep(ms: number) {
+  return new Promise<void>((r) => setTimeout(r, ms));
+}
+
+test('listPendingInbox returns only status=received, ordered by created_at ASC', async () => {
+  const dbPath = tempDbPath();
+  // Insert 3 rows with deliberate gaps so created_at differs.
+  insertInbox(
+    { messageHash: 'h1', messageId: null, botId: 'b', eventType: 'message', rawBody: '{"k":1}' },
+    dbPath,
+  );
+  await smallSleep(5);
+  insertInbox(
+    { messageHash: 'h2', messageId: null, botId: 'b', eventType: 'message', rawBody: '{"k":2}' },
+    dbPath,
+  );
+  await smallSleep(5);
+  insertInbox(
+    { messageHash: 'h3', messageId: null, botId: 'b', eventType: 'message', rawBody: '{"k":3}' },
+    dbPath,
+  );
+
+  // Flip one row to 'forwarded' — it must disappear from the pending list.
+  markInboxStatus(
+    { messageHash: 'h2', status: 'forwarded', receiptId: '200' },
+    dbPath,
+  );
+
+  const pending = listPendingInbox(10, dbPath);
+  assert.equal(pending.length, 2);
+  assert.deepEqual(
+    pending.map((r) => r.message_hash),
+    ['h1', 'h3'],
+  );
+});
+
+test('listPendingInbox respects limit', () => {
+  const dbPath = tempDbPath();
+  for (let i = 0; i < 5; i++) {
+    insertInbox(
+      { messageHash: `h${i}`, messageId: null, botId: 'b', eventType: 'message', rawBody: '{}' },
+      dbPath,
+    );
+  }
+  assert.equal(listPendingInbox(3, dbPath).length, 3);
+  assert.equal(listPendingInbox(10, dbPath).length, 5);
+});
+
+test('markInboxStatus forwarded: sets status + receiptId + clears error', () => {
+  const dbPath = tempDbPath();
+  insertInbox(
+    { messageHash: 'x', messageId: null, botId: 'b', eventType: 'message', rawBody: '{}' },
+    dbPath,
+  );
+  markInboxStatus(
+    { messageHash: 'x', status: 'forwarded', receiptId: '202' },
+    dbPath,
+  );
+  const row = getInboxByHash('x', dbPath)!;
+  assert.equal(row.status, 'forwarded');
+  assert.equal(row.receipt_id, '202');
+  assert.equal(row.error_message, null);
+});
+
+test('markInboxStatus invalid: sets status + errorMessage', () => {
+  const dbPath = tempDbPath();
+  insertInbox(
+    { messageHash: 'y', messageId: null, botId: 'b', eventType: 'message', rawBody: '{}' },
+    dbPath,
+  );
+  markInboxStatus(
+    { messageHash: 'y', status: 'invalid', errorMessage: 'driver_not_registered' },
+    dbPath,
+  );
+  const row = getInboxByHash('y', dbPath)!;
+  assert.equal(row.status, 'invalid');
+  assert.equal(row.error_message, 'driver_not_registered');
+  assert.equal(row.receipt_id, null);
+});
+
+test('markInboxStatus updates updated_at', async () => {
+  const dbPath = tempDbPath();
+  insertInbox(
+    { messageHash: 'z', messageId: null, botId: 'b', eventType: 'message', rawBody: '{}' },
+    dbPath,
+  );
+  const before = getInboxByHash('z', dbPath)!;
+  await smallSleep(10);
+  markInboxStatus({ messageHash: 'z', status: 'failed', errorMessage: 'http_502' }, dbPath);
+  const after = getInboxByHash('z', dbPath)!;
+  assert.ok(after.updated_at > before.updated_at, 'updated_at must advance');
 });

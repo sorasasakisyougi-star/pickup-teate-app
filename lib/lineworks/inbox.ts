@@ -112,3 +112,46 @@ export function getInboxByHash(hash: string, dbPath?: string): InboxRow | null {
     db.close();
   }
 }
+
+export type InboxStatus = 'received' | 'processing' | 'forwarded' | 'invalid' | 'failed';
+
+/** FIFO list of rows currently in `received` status. */
+export function listPendingInbox(limit: number, dbPath?: string): InboxRow[] {
+  const db = openInboxDb(dbPath);
+  try {
+    return db
+      .prepare(
+        "SELECT * FROM lw_inbox WHERE status = 'received' ORDER BY created_at ASC LIMIT ?",
+      )
+      .all(limit) as InboxRow[];
+  } finally {
+    db.close();
+  }
+}
+
+export type MarkStatusArgs = {
+  messageHash: string;
+  status: InboxStatus;
+  errorMessage?: string | null;
+  receiptId?: string | null;
+};
+
+/** Update status + optional error_message/receipt_id + updated_at. */
+export function markInboxStatus(args: MarkStatusArgs, dbPath?: string): void {
+  const db = openInboxDb(dbPath);
+  try {
+    const now = new Date().toISOString();
+    db.prepare(
+      'UPDATE lw_inbox SET status = ?, error_message = ?, receipt_id = ?, updated_at = ? ' +
+      'WHERE message_hash = ?',
+    ).run(
+      args.status,
+      args.errorMessage ?? null,
+      args.receiptId ?? null,
+      now,
+      args.messageHash,
+    );
+  } finally {
+    db.close();
+  }
+}
