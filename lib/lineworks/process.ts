@@ -15,7 +15,7 @@ import {
 import { buildV1Payload, type V1Payload } from './mapper';
 import type { ForwardResult } from './forward';
 
-export type ProcessOutcome =
+export type ProcessOutcome = { senderUserId: string | null } & (
   | {
       terminal: 'forwarded';
       payload: V1Payload;
@@ -31,7 +31,8 @@ export type ProcessOutcome =
       terminal: 'failed';
       error: string;
       attempts: number;
-    };
+    }
+);
 
 export type InvalidCode =
   | 'not_a_soutei_message'
@@ -115,8 +116,13 @@ const invalidMessages: Record<InvalidCode, string> = {
   missing_message_timestamp: '送信時刻が取得できません',
 };
 
-function invalid(code: InvalidCode, overrideMessage?: string): ProcessOutcome {
+function invalid(
+  code: InvalidCode,
+  senderUserId: string | null,
+  overrideMessage?: string,
+): ProcessOutcome {
   return {
+    senderUserId,
     terminal: 'invalid',
     code,
     userMessage: overrideMessage ?? invalidMessages[code],
@@ -133,42 +139,48 @@ export async function processInboxRow(
     const parsedJson = JSON.parse(rawBody);
     body = asObj(parsedJson);
   } catch {
-    return invalid('missing_message_body');
+    return invalid('missing_message_body', null);
   }
-  if (!body) return invalid('missing_message_body');
+  if (!body) return invalid('missing_message_body', null);
+
+  // Extract the sender's LW userId up front so every outcome can carry it;
+  // the Bot reply layer uses this to know who to reply to. When a #送迎
+  // shape is invalid, we still want to ping the sender.
+  const senderUserId = extractSenderUserId(body);
 
   const text = extractText(body);
-  if (!text) return invalid('missing_message_body');
+  if (!text) return invalid('missing_message_body', senderUserId);
 
   const parsed = parseMessageBody(text);
   if (!parsed.ok) {
-    if (parsed.code === 'no_response') return invalid('not_a_soutei_message');
-    return invalid(parsed.code, parsed.userMessage);
+    if (parsed.code === 'no_response') return invalid('not_a_soutei_message', senderUserId);
+    return invalid(parsed.code, senderUserId, parsed.userMessage);
   }
 
-  const senderUserId = extractSenderUserId(body);
-  if (!senderUserId) return invalid('missing_sender_user_id');
+  if (!senderUserId) return invalid('missing_sender_user_id', null);
 
   const messageTimestamp = extractIssuedTime(body, createdAtIso);
-  if (!messageTimestamp) return invalid('missing_message_timestamp');
+  if (!messageTimestamp) return invalid('missing_message_timestamp', senderUserId);
 
   let driver;
   try {
     driver = await resolveDriverByLineWorksUserId(deps.db, senderUserId);
   } catch (e) {
     return {
+      senderUserId,
       terminal: 'failed',
       error: e instanceof Error ? e.message : 'drivers_query_failed',
       attempts: 0,
     };
   }
-  if (!driver) return invalid('driver_user_id_not_registered');
+  if (!driver) return invalid('driver_user_id_not_registered', senderUserId);
 
   let locations;
   try {
     locations = await resolveRouteLocations(deps.db, parsed.data.from, parsed.data.arrivals);
   } catch (e) {
     return {
+      senderUserId,
       terminal: 'failed',
       error: e instanceof Error ? e.message : 'locations_query_failed',
       attempts: 0,
@@ -177,13 +189,13 @@ export async function processInboxRow(
   // 通常ルート: from must resolve; all arrivals must resolve.
   // バス: from may be "-" (null is OK); arrivals must still resolve.
   if (!parsed.data.isBus && !locations.from) {
-    return invalid('location_not_registered');
+    return invalid('location_not_registered', senderUserId);
   }
   const resolvedArrivals: NamedRow[] = locations.arrivals.filter(
     (a): a is NamedRow => a !== null,
   );
   if (resolvedArrivals.length !== locations.arrivals.length) {
-    return invalid('location_not_registered');
+    return invalid('location_not_registered', senderUserId);
   }
   const fromId = locations.from?.id ?? null;
   const arrivalIds = resolvedArrivals.map((a) => a.id);
@@ -193,12 +205,13 @@ export async function processInboxRow(
     fareYen = await computeFareYen(deps.db, fromId, arrivalIds, parsed.data.isBus);
   } catch (e) {
     return {
+      senderUserId,
       terminal: 'failed',
       error: e instanceof Error ? e.message : 'fares_query_failed',
       attempts: 0,
     };
   }
-  if (fareYen == null) return invalid('fare_not_registered');
+  if (fareYen == null) return invalid('fare_not_registered', senderUserId);
 
   // 通常ルート: require a route_distances row for every leg. Missing → invalid.
   // バス: distances aren't contractually defined (from may be "-") → skip lookup.
@@ -206,10 +219,11 @@ export async function processInboxRow(
   if (!parsed.data.isBus && fromId != null) {
     try {
       const segs = await resolveSegmentDistances(deps.db, fromId, arrivalIds);
-      if (segs == null) return invalid('distance_not_registered');
+      if (segs == null) return invalid('distance_not_registered', senderUserId);
       segmentDistances = segs;
     } catch (e) {
       return {
+        senderUserId,
         terminal: 'failed',
         error: e instanceof Error ? e.message : 'route_distances_query_failed',
         attempts: 0,
@@ -226,10 +240,8 @@ export async function processInboxRow(
 
   const result = await deps.forward(payload);
   if (result.ok) {
-    // Power Automate returns an HTTP status; the flow-run-id (if any) lives in
-    // the response body which we do not read. Record null rather than a
-    // misleading "200" string that isn't a real receipt.
     return {
+      senderUserId,
       terminal: 'forwarded',
       payload,
       receiptId: null,
@@ -237,6 +249,7 @@ export async function processInboxRow(
     };
   }
   return {
+    senderUserId,
     terminal: 'failed',
     error: result.error,
     attempts: result.attempts,

@@ -11,6 +11,12 @@ import test from 'node:test';
 
 import { NextRequest } from 'next/server';
 
+import { insertInbox, getInboxByHash } from '../../lib/lineworks/inbox';
+import {
+  __setBotClientFactoryForTests,
+  type BotClient,
+} from '../../lib/lineworks/botClient';
+
 function tempDbPath(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lw-proc-route-'));
   return path.join(dir, 'test.db');
@@ -135,4 +141,153 @@ test('GET 405', async () => {
   const { GET } = await loadRoute();
   const res = await GET();
   assert.equal(res.status, 405);
+});
+
+// --- Phase 2d-1: Bot reply wiring -----------------------------------------
+
+function makeFakeBot(result:
+  | { ok: true; status: 200 }
+  | { ok: false; status: number | null; error: string }
+): { client: BotClient; calls: Array<{ userId: string; text: string }> } {
+  const calls: Array<{ userId: string; text: string }> = [];
+  const client: BotClient = {
+    async sendText(userId, text) {
+      calls.push({ userId, text });
+      return result;
+    },
+  };
+  return { client, calls };
+}
+
+function seedInboxRow(dbPath: string, rawBodyJson: string, hash = 'h-1') {
+  insertInbox(
+    {
+      messageHash: hash,
+      messageId: 'msg-1',
+      botId: 'bot-pickup-test',
+      eventType: 'message',
+      rawBody: rawBodyJson,
+    },
+    dbPath,
+  );
+  return hash;
+}
+
+function rawWebhookBody(
+  text: string,
+  userId = 'uuid-unknown', // invalid path by default
+) {
+  return JSON.stringify({
+    type: 'message',
+    source: { userId },
+    issuedTime: '2026-04-19T01:15:00Z',
+    content: { type: 'text', text, messageId: 'msg-1' },
+  });
+}
+
+test('replyStatus=disabled when LW_BOT_REPLY_ENABLED off and no override', async () => {
+  setStandardEnv();
+  const dbPath = process.env.LW_INBOX_DB_PATH!;
+  const hash = seedInboxRow(dbPath, rawWebhookBody('#送迎\nハイエース\n通常ルート\n会社\nA病院\n100\n150'));
+  __setBotClientFactoryForTests(null); // no override → factory honours env (off)
+  delete process.env.LW_BOT_REPLY_ENABLED;
+
+  const { POST } = await loadRoute();
+  const res = await POST(makeReq({ 'x-admin-key': 'test-admin-key' }));
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as {
+    details: Array<{ messageHash: string; terminal: string; replyStatus: string }>;
+  };
+  const detail = json.details.find((d) => d.messageHash === hash)!;
+  assert.equal(detail.replyStatus, 'disabled');
+});
+
+test('invalid → Bot reply sends outcome.userMessage', async () => {
+  setStandardEnv();
+  const dbPath = process.env.LW_INBOX_DB_PATH!;
+  // driver_user_id_not_registered path: body is valid, but uuid-unknown
+  // doesn't resolve against Supabase (the route uses a real Supabase
+  // client which will fail; we'd normally mock but here we rely on the
+  // process layer failing BEFORE the Supabase call — specifically on the
+  // 運転者解決 step, which throws "drivers_query_failed" because the
+  // fake Supabase URL has no server. To avoid that flakiness, we seed
+  // with a body that is invalid at PARSE time (unknown trailing line) so
+  // invalid is returned before any Supabase call.
+  const invalidBody = '#送迎\nハイエース\n通常ルート\n会社\nA病院\n100\n150\n何か';
+  const hash = seedInboxRow(dbPath, rawWebhookBody(invalidBody, 'uuid-driver-1'));
+  const bot = makeFakeBot({ ok: true, status: 200 });
+  __setBotClientFactoryForTests(() => bot.client);
+
+  const { POST } = await loadRoute();
+  const res = await POST(makeReq({ 'x-admin-key': 'test-admin-key' }));
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as {
+    details: Array<{
+      messageHash: string;
+      terminal: string;
+      code?: string;
+      userMessage?: string;
+      replyStatus: string;
+    }>;
+  };
+  const detail = json.details.find((d) => d.messageHash === hash)!;
+  assert.equal(detail.terminal, 'invalid');
+  assert.equal(detail.code, 'invalid_format');
+  assert.equal(bot.calls.length, 1);
+  assert.equal(bot.calls[0].userId, 'uuid-driver-1');
+  assert.equal(bot.calls[0].text, detail.userMessage);
+
+  __setBotClientFactoryForTests(null);
+});
+
+test('reply failure does NOT change persisted inbox status (status stays invalid)', async () => {
+  setStandardEnv();
+  const dbPath = process.env.LW_INBOX_DB_PATH!;
+  const invalidBody = '#送迎\nハイエース\n特別\n会社\nA病院\n100\n150';
+  const hash = seedInboxRow(dbPath, rawWebhookBody(invalidBody, 'uuid-driver-1'));
+  const bot = makeFakeBot({ ok: false, status: 503, error: 'http_503' });
+  __setBotClientFactoryForTests(() => bot.client);
+
+  const { POST } = await loadRoute();
+  const res = await POST(makeReq({ 'x-admin-key': 'test-admin-key' }));
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as {
+    details: Array<{
+      messageHash: string;
+      terminal: string;
+      replyStatus: string;
+      replyError?: string;
+    }>;
+  };
+  const detail = json.details.find((d) => d.messageHash === hash)!;
+  assert.equal(detail.terminal, 'invalid');
+  assert.equal(detail.replyStatus, 'failed');
+  assert.equal(detail.replyError, 'http_503');
+
+  // Persisted status must be 'invalid' — reply failure does NOT roll it back.
+  const row = getInboxByHash(hash, dbPath);
+  assert.equal(row!.status, 'invalid');
+  __setBotClientFactoryForTests(null);
+});
+
+test('replyStatus=skipped when outcome has no userMessage (not_a_soutei_message)', async () => {
+  setStandardEnv();
+  const dbPath = process.env.LW_INBOX_DB_PATH!;
+  const hash = seedInboxRow(dbPath, rawWebhookBody('こんにちは', 'uuid-driver-1'));
+  const bot = makeFakeBot({ ok: true, status: 200 });
+  __setBotClientFactoryForTests(() => bot.client);
+
+  const { POST } = await loadRoute();
+  const res = await POST(makeReq({ 'x-admin-key': 'test-admin-key' }));
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as {
+    details: Array<{ messageHash: string; terminal: string; code?: string; replyStatus: string }>;
+  };
+  const detail = json.details.find((d) => d.messageHash === hash)!;
+  assert.equal(detail.terminal, 'invalid');
+  assert.equal(detail.code, 'not_a_soutei_message');
+  assert.equal(detail.replyStatus, 'skipped');
+  assert.equal(bot.calls.length, 0);
+
+  __setBotClientFactoryForTests(null);
 });

@@ -21,6 +21,7 @@ import {
 import { forwardToPowerAutomate } from '@/lib/lineworks/forward';
 import type { V1Payload } from '@/lib/lineworks/mapper';
 import { processInboxRow, type ProcessOutcome } from '@/lib/lineworks/process';
+import { createBotClientFromEnv, type BotClient } from '@/lib/lineworks/botClient';
 
 // better-sqlite3 + Supabase client require Node runtime.
 export const runtime = 'nodejs';
@@ -36,7 +37,63 @@ type RowResult = {
   error?: string;
   userMessage?: string;
   attempts?: number;
+  replyStatus?: 'sent' | 'skipped' | 'failed' | 'disabled';
+  replyError?: string;
 };
+
+const FORWARDED_REPLY_TEXT = '送迎記録を登録しました';
+
+/**
+ * What to say back to the sender (if anything). `failed` is intentionally
+ * silent — we log the error server-side but don't spam the driver while
+ * we debug. `invalid` with an empty userMessage (e.g. not_a_soutei_message)
+ * also stays silent.
+ */
+function computeReplyText(outcome: ProcessOutcome): string | null {
+  if (outcome.terminal === 'forwarded') return FORWARDED_REPLY_TEXT;
+  if (outcome.terminal === 'invalid' && outcome.userMessage.length > 0) {
+    return outcome.userMessage;
+  }
+  return null;
+}
+
+/**
+ * Fire-and-forget-ish Bot reply. Reply failure is logged but MUST NOT
+ * roll back the inbox status — persistence already recorded the terminal
+ * result from the Power Automate forwarding path, which is the source
+ * of truth for the pipeline.
+ */
+async function tryReply(
+  botClient: BotClient | null,
+  outcome: ProcessOutcome,
+  detail: RowResult,
+): Promise<void> {
+  if (!botClient) {
+    detail.replyStatus = 'disabled';
+    return;
+  }
+  if (!outcome.senderUserId) {
+    detail.replyStatus = 'skipped';
+    return;
+  }
+  const text = computeReplyText(outcome);
+  if (!text) {
+    detail.replyStatus = 'skipped';
+    return;
+  }
+  const result = await botClient.sendText(outcome.senderUserId, text);
+  if (result.ok) {
+    detail.replyStatus = 'sent';
+  } else {
+    detail.replyStatus = 'failed';
+    detail.replyError = result.error;
+    console.warn(
+      '[lw/process-inbox] reply failed (inbox status preserved):',
+      detail.messageHash,
+      result.error,
+    );
+  }
+}
 
 function extractAdminKey(req: NextRequest): string {
   const header = req.headers.get('x-admin-key') || '';
@@ -158,6 +215,7 @@ export async function POST(req: NextRequest) {
 
   const rows = listPendingInbox(limit);
   const details: RowResult[] = [];
+  const botClient = createBotClientFromEnv();
   let processed = 0;
   let skipped = 0;
   let forwarded = 0;
@@ -178,7 +236,11 @@ export async function POST(req: NextRequest) {
         forward: forwardPayload,
       });
       persistOutcome(row, outcome);
-      details.push(rowResultFromOutcome(row.message_hash, outcome));
+      const detail = rowResultFromOutcome(row.message_hash, outcome);
+      // Reply is a pure side effect; its outcome is attached to `detail`
+      // but NEVER mutates persisted inbox status.
+      await tryReply(botClient, outcome, detail);
+      details.push(detail);
       if (outcome.terminal === 'forwarded') forwarded++;
       else if (outcome.terminal === 'invalid') invalid++;
       else failed++;
