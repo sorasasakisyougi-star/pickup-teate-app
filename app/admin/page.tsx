@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { isValidUuid, UUID_INVALID_UI_MESSAGE } from "@/lib/admin/uuid";
 
 type DriverRow = { id: number; name: string; lineworks_user_id: string | null };
 type VehicleRow = { id: number; name: string };
@@ -72,7 +73,16 @@ export default function AdminPage() {
   const [openFares, setOpenFares] = useState(false);
 
   async function apiGet(path: string) {
-    const res = await fetch(`${path}?ts=${Date.now()}`, { cache: "no-store" });
+    // Phase 2d Step 0 fix: GET /api/admin/drivers now requires x-admin-key
+    // (it returns lineworks_user_id). Sending the key unconditionally for
+    // all admin GETs is safe — the endpoints that don't require it simply
+    // ignore the header.
+    const headers: Record<string, string> = { "cache-control": "no-store" };
+    if (adminKey) headers["x-admin-key"] = adminKey;
+    const res = await fetch(`${path}?ts=${Date.now()}`, {
+      cache: "no-store",
+      headers,
+    });
     return readJson(res);
   }
 
@@ -511,31 +521,53 @@ export default function AdminPage() {
         <div className="space-y-6">
           <section className="rounded-[24px] border border-white/10 bg-white/[0.03] p-4">
             <h2 className="mb-4 text-2xl font-extrabold">運転手を追加</h2>
-            <div className="flex flex-col gap-3">
-              <input
-                value={newDriverName}
-                onChange={(e) => setNewDriverName(e.target.value)}
-                placeholder="運転手名"
-                className="min-h-[56px] flex-1 rounded-[18px] border border-white/10 bg-black/20 px-4 text-xl text-white outline-none"
-              />
-              <input
-                value={newDriverLineWorksUserId}
-                onChange={(e) => setNewDriverLineWorksUserId(e.target.value)}
-                placeholder="LINE WORKS ユーザーID (任意、送迎Bot運用時に必須)"
-                className="min-h-[56px] flex-1 rounded-[18px] border border-white/10 bg-black/20 px-4 text-base font-mono text-white outline-none"
-              />
-              <button
-                type="button"
-                onClick={addDriver}
-                className="min-h-[56px] rounded-[18px] border border-blue-400/30 bg-[#3158d8] px-5 text-lg font-bold"
-              >
-                追加
-              </button>
-            </div>
-            <p className="mt-3 text-sm text-white/60">
-              送迎Bot でこの運転手を受け付けるには、LINE WORKS の source.userId
-              (UUID形式) を登録してください。空欄のまま追加しても後から編集できます。
-            </p>
+            {(() => {
+              const trimmedUuid = newDriverLineWorksUserId.trim();
+              const uuidProvided = trimmedUuid.length > 0;
+              const uuidValid = !uuidProvided || isValidUuid(trimmedUuid);
+              const canAdd = newDriverName.trim().length > 0 && uuidValid;
+              return (
+                <>
+                  <div className="flex flex-col gap-3">
+                    <input
+                      value={newDriverName}
+                      onChange={(e) => setNewDriverName(e.target.value)}
+                      placeholder="運転手名"
+                      className="min-h-[56px] flex-1 rounded-[18px] border border-white/10 bg-black/20 px-4 text-xl text-white outline-none"
+                    />
+                    <input
+                      value={newDriverLineWorksUserId}
+                      onChange={(e) => setNewDriverLineWorksUserId(e.target.value)}
+                      placeholder="LINE WORKS ユーザーID (任意、送迎Bot運用時に必須)"
+                      className={`min-h-[56px] flex-1 rounded-[18px] border px-4 text-base font-mono text-white outline-none ${
+                        uuidProvided && !uuidValid
+                          ? "border-red-400/50 bg-red-500/10"
+                          : "border-white/10 bg-black/20"
+                      }`}
+                    />
+                    {uuidProvided && !uuidValid && (
+                      <div className="text-sm text-red-300">{UUID_INVALID_UI_MESSAGE}</div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={addDriver}
+                      disabled={!canAdd}
+                      className={`min-h-[56px] rounded-[18px] px-5 text-lg font-bold ${
+                        canAdd
+                          ? "border border-blue-400/30 bg-[#3158d8] text-white"
+                          : "border border-white/10 bg-white/5 text-white/40"
+                      }`}
+                    >
+                      追加
+                    </button>
+                  </div>
+                  <p className="mt-3 text-sm text-white/60">
+                    送迎Bot でこの運転手を受け付けるには、LINE WORKS の source.userId
+                    (UUID形式) を登録してください。空欄のまま追加しても後から編集できます。
+                  </p>
+                </>
+              );
+            })()}
           </section>
 
           <section className="rounded-[24px] border border-white/10 bg-white/[0.03] p-4">
@@ -761,6 +793,9 @@ function DriverEditRow({
   const current = driver.lineworks_user_id ?? "";
   const dirty = trimmed !== current;
   const missing = !current;
+  const uuidProvided = trimmed.length > 0;
+  const uuidValid = !uuidProvided || isValidUuid(trimmed);
+  const canSave = dirty && uuidValid;
   return (
     <div className="flex flex-col gap-2 rounded-[18px] border border-white/10 bg-black/20 px-4 py-3">
       <div className="flex items-center justify-between gap-3">
@@ -779,17 +814,19 @@ function DriverEditRow({
           onChange={(e) => setValue(e.target.value)}
           placeholder="LINE WORKS ユーザーID (UUID)"
           className={`min-h-[44px] flex-1 rounded-[12px] border px-3 text-sm font-mono text-white outline-none ${
-            missing
+            uuidProvided && !uuidValid
+              ? "border-red-400/50 bg-red-500/10"
+              : missing
               ? "border-amber-400/40 bg-amber-500/10"
               : "border-white/10 bg-black/30"
           }`}
         />
         <button
           type="button"
-          disabled={!dirty}
+          disabled={!canSave}
           onClick={() => onSaveLineWorksUserId(trimmed)}
           className={`min-h-[44px] rounded-[12px] px-4 text-sm font-bold ${
-            dirty
+            canSave
               ? "border border-blue-400/30 bg-[#3158d8] text-white"
               : "border border-white/10 bg-white/5 text-white/40"
           }`}
@@ -797,6 +834,9 @@ function DriverEditRow({
           保存
         </button>
       </div>
+      {uuidProvided && !uuidValid && (
+        <div className="text-xs text-red-300">{UUID_INVALID_UI_MESSAGE}</div>
+      )}
       {missing && (
         <div className="text-xs text-amber-300">
           未登録です。送迎Bot 受信を有効にする前に UUID を入力してください。
