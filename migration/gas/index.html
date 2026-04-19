@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <base target="_top">
+  <title>送迎報告</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: system-ui, -apple-system, "Hiragino Sans", Meiryo, sans-serif;
+           padding: 16px; max-width: 520px; margin: 0 auto; background: #f7f7f8; color: #1a1a1a; }
+    h1 { font-size: 20px; margin: 0 0 12px; }
+    .row { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+    label { font-size: 13px; color: #444; }
+    input, select, textarea { padding: 10px 12px; font-size: 16px;
+                              border: 1px solid #ccc; border-radius: 8px; background: white; }
+    input:focus, select:focus, textarea:focus { outline: 2px solid #3158d8; border-color: transparent; }
+    .mode-toggle { display: flex; gap: 8px; }
+    .mode-toggle button { flex: 1; padding: 12px; font-size: 15px; font-weight: 700;
+                          border: 1px solid #ccc; border-radius: 8px; background: white; cursor: pointer; }
+    .mode-toggle button.active { background: #3158d8; color: white; border-color: #3158d8; }
+    .arrivals .arrival-row { display: flex; gap: 6px; align-items: center; }
+    .arrivals select { flex: 1; }
+    .arrivals button.remove { padding: 6px 10px; border: 1px solid #ccc; background: white;
+                              border-radius: 6px; cursor: pointer; }
+    .arrivals .add-btn { margin-top: 6px; padding: 10px; background: white; border: 1px dashed #888;
+                         border-radius: 8px; cursor: pointer; width: 100%; font-size: 14px; }
+    .submit { margin-top: 18px; padding: 14px; font-size: 16px; font-weight: 700;
+              background: #3158d8; color: white; border: none; border-radius: 10px; cursor: pointer; width: 100%; }
+    .submit:disabled { background: #a0a0a0; cursor: not-allowed; }
+    .banner { padding: 10px 12px; border-radius: 8px; font-size: 14px; margin: 10px 0; }
+    .banner.ok { background: #e6f7ec; color: #1a5e2a; border: 1px solid #88c299; }
+    .banner.err { background: #fdecec; color: #8f1d1d; border: 1px solid #e4a2a2; }
+    .banner.info { background: #eaf2fd; color: #1a3b7a; border: 1px solid #9bb8df; }
+    .meta { font-size: 12px; color: #777; margin-top: 12px; }
+    .test-badge { display: inline-block; background: #ffc107; color: #333;
+                  font-size: 11px; padding: 2px 6px; border-radius: 4px; margin-left: 6px; }
+  </style>
+</head>
+<body>
+  <h1>送迎報告
+    <? if (testMode) { ?><span class="test-badge">TEST</span><? } ?>
+  </h1>
+
+  <div id="state-loading" class="banner info">LIFF 初期化中...</div>
+  <div id="state-error" class="banner err" hidden></div>
+  <div id="state-success" class="banner ok" hidden></div>
+
+  <form id="form" hidden>
+    <div class="row">
+      <label>運転者</label>
+      <select name="driver" required><option value="">選択</option></select>
+    </div>
+
+    <div class="row">
+      <label>車両</label>
+      <select name="vehicle" required><option value="">選択</option></select>
+    </div>
+
+    <div class="row">
+      <label>区分</label>
+      <div class="mode-toggle">
+        <button type="button" data-mode="通常ルート" class="active">通常ルート</button>
+        <button type="button" data-mode="バス">バス</button>
+      </div>
+      <input type="hidden" name="mode" value="通常ルート">
+    </div>
+
+    <div class="row">
+      <label>出発地</label>
+      <select name="from" required><option value="">選択</option></select>
+    </div>
+
+    <div class="row arrivals">
+      <label>到着 (1-8)</label>
+      <div id="arrivals-list"></div>
+      <button type="button" class="add-btn" id="add-arrival">＋ 到着を追加</button>
+    </div>
+
+    <div class="row">
+      <label>ODO (出発)</label>
+      <input type="number" name="odoStart" inputmode="numeric" required>
+    </div>
+
+    <div class="row">
+      <label>ODO (到着)</label>
+      <input type="number" name="odoEnd" inputmode="numeric" required>
+    </div>
+
+    <div class="row">
+      <label>備考 (任意)</label>
+      <textarea name="note" rows="2"></textarea>
+    </div>
+
+    <button type="submit" class="submit" id="submit">保存</button>
+    <div class="meta" id="user-meta"></div>
+  </form>
+
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script>
+    var LIFF_ID = <?= JSON.stringify(liffId) ?>;
+    var TEST_MODE = <?= testMode ? 'true' : 'false' ?>;
+
+    var state = {
+      userId: null,
+      displayName: null,
+      locations: [],
+      mode: '通常ルート',
+    };
+
+    function $(s) { return document.querySelector(s); }
+    function show(el) { el.hidden = false; }
+    function hide(el) { el.hidden = true; }
+
+    function setError(msg) {
+      hide($('#state-loading'));
+      hide($('#state-success'));
+      var el = $('#state-error'); el.textContent = msg; show(el);
+    }
+    function setSuccess(msg) {
+      hide($('#state-loading'));
+      hide($('#state-error'));
+      var el = $('#state-success'); el.textContent = msg; show(el);
+    }
+
+    function renderLocationOptions(selectEl, locations) {
+      selectEl.innerHTML = '<option value="">選択</option>';
+      locations.forEach(function(loc) {
+        var o = document.createElement('option');
+        o.value = loc; o.textContent = loc;
+        selectEl.appendChild(o);
+      });
+    }
+
+    function addArrival() {
+      var list = $('#arrivals-list');
+      if (list.children.length >= 8) return;
+      var row = document.createElement('div');
+      row.className = 'arrival-row';
+      row.style.margin = '6px 0';
+      var sel = document.createElement('select');
+      sel.name = 'arrival';
+      renderLocationOptions(sel, state.locations);
+      row.appendChild(sel);
+      var btn = document.createElement('button');
+      btn.type = 'button'; btn.className = 'remove'; btn.textContent = '×';
+      btn.onclick = function() { row.remove(); };
+      row.appendChild(btn);
+      list.appendChild(row);
+    }
+
+    function getArrivals() {
+      return Array.prototype.slice.call($('#arrivals-list').querySelectorAll('select'))
+        .map(function(s) { return s.value; })
+        .filter(function(v) { return v; });
+    }
+
+    function renderFormFromMasters(m) {
+      var driverSel = $('select[name=driver]');
+      driverSel.innerHTML = '<option value="">選択</option>';
+      m.drivers.forEach(function(d) {
+        var o = document.createElement('option'); o.value = d; o.textContent = d;
+        driverSel.appendChild(o);
+      });
+
+      var vehSel = $('select[name=vehicle]');
+      vehSel.innerHTML = '<option value="">選択</option>';
+      m.vehicles.forEach(function(v) {
+        var o = document.createElement('option'); o.value = v; o.textContent = v;
+        vehSel.appendChild(o);
+      });
+
+      state.locations = m.locations;
+      renderLocationOptions($('select[name=from]'), m.locations);
+      addArrival();
+
+      $('#user-meta').textContent = '投稿者: ' + m.displayName + (TEST_MODE ? '  [test sheet]' : '');
+      show($('#form'));
+    }
+
+    document.querySelectorAll('.mode-toggle button').forEach(function(b) {
+      b.addEventListener('click', function() {
+        document.querySelectorAll('.mode-toggle button').forEach(function(x) { x.classList.remove('active'); });
+        b.classList.add('active');
+        state.mode = b.getAttribute('data-mode');
+        $('input[name=mode]').value = state.mode;
+      });
+    });
+
+    $('#add-arrival').addEventListener('click', addArrival);
+
+    $('#form').addEventListener('submit', function(ev) {
+      ev.preventDefault();
+      hide($('#state-error'));
+      hide($('#state-success'));
+      var f = ev.target;
+      var arrivals = getArrivals();
+      if (arrivals.length === 0) { setError('到着地を 1 つ以上選択してください'); return; }
+      var payload = {
+        userId: state.userId,
+        reportedAt: new Date().toISOString(),
+        driver: f.driver.value,
+        vehicle: f.vehicle.value,
+        mode: state.mode,
+        from: f.from.value,
+        arrivals: arrivals,
+        odoStart: Number(f.odoStart.value),
+        odoEnd: Number(f.odoEnd.value),
+        note: f.note.value,
+      };
+      $('#submit').disabled = true;
+      google.script.run
+        .withSuccessHandler(function(res) {
+          setSuccess('保存しました (' + res.savedAt + ')');
+          f.reset();
+          $('#arrivals-list').innerHTML = '';
+          addArrival();
+          $('#submit').disabled = false;
+        })
+        .withFailureHandler(function(err) {
+          var msg = (err && err.message) ? err.message : String(err);
+          var human = msg;
+          if (msg.indexOf('unauthorized:user_not_registered') === 0) human = '運転者登録が必要です';
+          else if (msg.indexOf('unauthorized:inactive_user') === 0) human = '運転者登録が無効化されています';
+          else if (msg.indexOf('invalid:too_many_arrivals') === 0) human = '到着地は最大 8 件です';
+          else if (msg.indexOf('invalid:missing_odo') === 0) human = 'ODO を数値で入力してください';
+          else if (msg.indexOf('invalid:odo_end_before_start') === 0) human = 'ODO (到着) は ODO (出発) 以上にしてください';
+          else if (msg === 'fare_not_registered') human = '料金マスタが未登録です。管理者に連絡してください';
+          else if (msg === 'distance_not_registered') human = '区間距離マスタが未登録です。管理者に連絡してください';
+          setError(human);
+          $('#submit').disabled = false;
+        })
+        .saveReport(payload);
+    });
+
+    (async function() {
+      try {
+        await liff.init({ liffId: LIFF_ID });
+        if (!liff.isLoggedIn()) { liff.login(); return; }
+        var profile = await liff.getProfile();
+        state.userId = profile.userId;
+        state.displayName = profile.displayName;
+
+        google.script.run
+          .withSuccessHandler(function(m) {
+            hide($('#state-loading'));
+            renderFormFromMasters(m);
+          })
+          .withFailureHandler(function(err) {
+            var msg = (err && err.message) ? err.message : String(err);
+            if (msg === 'user_not_registered') setError('運転者登録がありません。管理者にご連絡ください');
+            else if (msg === 'inactive_user') setError('運転者登録が無効になっています');
+            else setError('マスタ読込に失敗しました: ' + msg);
+          })
+          .loadMasters(state.userId);
+      } catch (e) {
+        setError('LIFF 初期化に失敗しました: ' + (e && e.message || e));
+      }
+    })();
+  </script>
+</body>
+</html>
