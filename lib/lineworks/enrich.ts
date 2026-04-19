@@ -14,6 +14,7 @@ export type RouteDistanceRow = {
 
 export type EnrichDbClient = {
   findDriverByName(name: string): Promise<NamedRow | null>;
+  findDriverByLineWorksUserId(userId: string): Promise<NamedRow | null>;
   findLocationByName(name: string): Promise<NamedRow | null>;
   findFare(fromId: number, toId: number): Promise<FareRow | null>;
   findRouteDistance(fromId: number, toId: number): Promise<RouteDistanceRow | null>;
@@ -30,6 +31,20 @@ export async function resolveDriverByName(
   const name = displayName.trim();
   if (!name) return null;
   return db.findDriverByName(name);
+}
+
+/**
+ * Resolve a driver from the LINE WORKS webhook source.userId (UUID). This
+ * is the Phase 2d primary path — webhooks do not carry a display name, so
+ * drivers must be pre-provisioned with their LW userId via admin/drivers.
+ */
+export async function resolveDriverByLineWorksUserId(
+  db: EnrichDbClient,
+  userId: string,
+): Promise<NamedRow | null> {
+  const id = userId.trim();
+  if (!id) return null;
+  return db.findDriverByLineWorksUserId(id);
 }
 
 /**
@@ -154,6 +169,15 @@ export function createSupabaseEnrichClient(
         .from('drivers')
         .select('id,name')
         .eq('name', name)
+        .maybeSingle();
+      if (res.error) throw new Error('drivers_query_failed');
+      return (res.data as NamedRow | null) ?? null;
+    },
+    async findDriverByLineWorksUserId(userId) {
+      const res = await supabase
+        .from('drivers')
+        .select('id,name')
+        .eq('lineworks_user_id', userId)
         .maybeSingle();
       if (res.error) throw new Error('drivers_query_failed');
       return (res.data as NamedRow | null) ?? null;

@@ -7,7 +7,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (req.method === "GET") {
       const { data, error } = await supabaseAdmin
         .from("drivers")
-        .select("id,name")
+        .select("id,name,lineworks_user_id")
         .order("name", { ascending: true });
 
       if (error) {
@@ -24,6 +24,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (!name) {
         return res.status(400).json({ ok: false, error: "name is required" });
       }
+      const lineworksUserIdRaw = req.body?.lineworks_user_id;
+      const lineworksUserId =
+        typeof lineworksUserIdRaw === "string" && lineworksUserIdRaw.trim().length > 0
+          ? lineworksUserIdRaw.trim()
+          : null;
 
       const existing = await supabaseAdmin
         .from("drivers")
@@ -41,8 +46,39 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       const { data, error } = await supabaseAdmin
         .from("drivers")
-        .insert({ name })
-        .select("id,name")
+        .insert({ name, lineworks_user_id: lineworksUserId })
+        .select("id,name,lineworks_user_id")
+        .single();
+
+      if (error) {
+        return res.status(500).json({ ok: false, error: error.message });
+      }
+
+      return res.status(200).json({ ok: true, item: data });
+    }
+
+    if (req.method === "PATCH") {
+      const id = Number(req.body?.id);
+      if (!id) {
+        return res.status(400).json({ ok: false, error: "id is required" });
+      }
+      const lineworksUserIdRaw = req.body?.lineworks_user_id;
+      let lineworksUserId: string | null;
+      if (lineworksUserIdRaw === null) {
+        lineworksUserId = null;
+      } else if (typeof lineworksUserIdRaw === "string") {
+        lineworksUserId = lineworksUserIdRaw.trim() || null;
+      } else {
+        return res
+          .status(400)
+          .json({ ok: false, error: "lineworks_user_id must be string or null" });
+      }
+
+      const { data, error } = await supabaseAdmin
+        .from("drivers")
+        .update({ lineworks_user_id: lineworksUserId })
+        .eq("id", id)
+        .select("id,name,lineworks_user_id")
         .single();
 
       if (error) {

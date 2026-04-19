@@ -5,7 +5,7 @@
 
 import { parseMessageBody, type ParseErrorCode } from './parse';
 import {
-  resolveDriverByName,
+  resolveDriverByLineWorksUserId,
   resolveRouteLocations,
   computeFareYen,
   resolveSegmentDistances,
@@ -36,12 +36,12 @@ export type ProcessOutcome =
 export type InvalidCode =
   | 'not_a_soutei_message'
   | ParseErrorCode
-  | 'driver_not_registered'
+  | 'driver_user_id_not_registered'
   | 'location_not_registered'
   | 'fare_not_registered'
   | 'distance_not_registered'
   | 'missing_message_body'
-  | 'missing_sender_name'
+  | 'missing_sender_user_id'
   | 'missing_message_timestamp';
 
 export type ProcessDeps = {
@@ -64,25 +64,38 @@ function extractText(body: JsonObj): string | null {
   return content ? pickStr(content.text) : null;
 }
 
-function extractSenderName(body: JsonObj): string | null {
+/**
+ * LINE WORKS webhook envelope carries only source.userId — no display name.
+ * Drivers are resolved by this ID via drivers.lineworks_user_id (Phase 2d).
+ */
+function extractSenderUserId(body: JsonObj): string | null {
   const source = asObj(body.source);
-  const content = asObj(body.content);
-  return (
-    (source && pickStr(source.userName)) ||
-    (source && pickStr(source.name)) ||
-    (source && pickStr(source.displayName)) ||
-    pickStr(body.userName) ||
-    pickStr(body.senderName) ||
-    (content && pickStr(content.userName)) ||
-    null
-  );
+  return (source && pickStr(source.userId)) || pickStr(body.userId) || null;
 }
 
+/**
+ * LW Bot docs show two possible shapes:
+ *   issuedTime: "2022-01-04T05:16:05.716Z"   (ISO string)
+ *   createdTime: 1640281225908                 (ms-epoch number)
+ * Accept both; fall back to the inbox row's created_at ISO when absent.
+ */
 function extractIssuedTime(body: JsonObj, fallbackIso: string): Date | null {
-  const raw = pickStr(body.issuedTime) ?? pickStr(body.createdTime) ?? fallbackIso;
-  if (!raw) return null;
-  const d = new Date(raw);
-  return Number.isNaN(d.getTime()) ? null : d;
+  const candidates: unknown[] = [body.issuedTime, body.createdTime];
+  for (const raw of candidates) {
+    if (typeof raw === 'number' && Number.isFinite(raw)) {
+      const d = new Date(raw);
+      if (!Number.isNaN(d.getTime())) return d;
+    }
+    if (typeof raw === 'string' && raw.length > 0) {
+      const d = new Date(raw);
+      if (!Number.isNaN(d.getTime())) return d;
+    }
+  }
+  if (fallbackIso) {
+    const d = new Date(fallbackIso);
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+  return null;
 }
 
 const invalidMessages: Record<InvalidCode, string> = {
@@ -93,12 +106,12 @@ const invalidMessages: Record<InvalidCode, string> = {
   too_many_arrivals: '到着地は最大8件です',
   missing_arrivals: '到着地がありません',
   missing_odo: 'ODO始/ODO終がありません',
-  driver_not_registered: '運転者名が未登録です',
+  driver_user_id_not_registered: 'LINE WORKS ユーザーID未登録です',
   location_not_registered: '場所名が未登録です',
   fare_not_registered: '料金マスタが未登録です',
   distance_not_registered: '区間距離マスタが未登録です',
   missing_message_body: '入力形式が違います',
-  missing_sender_name: '送信者名が取得できません',
+  missing_sender_user_id: '送信者IDが取得できません',
   missing_message_timestamp: '送信時刻が取得できません',
 };
 
@@ -133,15 +146,15 @@ export async function processInboxRow(
     return invalid(parsed.code, parsed.userMessage);
   }
 
-  const senderName = extractSenderName(body);
-  if (!senderName) return invalid('missing_sender_name');
+  const senderUserId = extractSenderUserId(body);
+  if (!senderUserId) return invalid('missing_sender_user_id');
 
   const messageTimestamp = extractIssuedTime(body, createdAtIso);
   if (!messageTimestamp) return invalid('missing_message_timestamp');
 
   let driver;
   try {
-    driver = await resolveDriverByName(deps.db, senderName);
+    driver = await resolveDriverByLineWorksUserId(deps.db, senderUserId);
   } catch (e) {
     return {
       terminal: 'failed',
@@ -149,7 +162,7 @@ export async function processInboxRow(
       attempts: 0,
     };
   }
-  if (!driver) return invalid('driver_not_registered');
+  if (!driver) return invalid('driver_user_id_not_registered');
 
   let locations;
   try {

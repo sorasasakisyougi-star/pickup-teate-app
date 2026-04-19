@@ -11,8 +11,10 @@ import type {
 import type { V1Payload } from '../../lib/lineworks/mapper';
 import type { ForwardResult } from '../../lib/lineworks/forward';
 
+type DriverFixture = NamedRow & { lineworks_user_id?: string | null };
+
 function makeDb(init: {
-  drivers?: NamedRow[];
+  drivers?: DriverFixture[];
   locations?: NamedRow[];
   fares?: FareRow[];
   routeDistances?: RouteDistanceRow[];
@@ -24,6 +26,10 @@ function makeDb(init: {
   return {
     async findDriverByName(name) {
       return drivers.find((d) => d.name === name) ?? null;
+    },
+    async findDriverByLineWorksUserId(userId) {
+      const d = drivers.find((x) => x.lineworks_user_id === userId);
+      return d ? { id: d.id, name: d.name } : null;
     },
     async findLocationByName(name) {
       return locations.find((l) => l.name === name) ?? null;
@@ -50,10 +56,13 @@ function makeForward(result: ForwardResult) {
   };
 }
 
-function body(text: string, opts: { senderName?: string; issuedTime?: string } = {}) {
+function body(
+  text: string,
+  opts: { userId?: string; issuedTime?: string | number } = {},
+) {
   return JSON.stringify({
     type: 'message',
-    source: { userId: 'u-1', userName: opts.senderName ?? '山田太郎' },
+    source: { userId: opts.userId ?? 'uuid-driver-1' },
     issuedTime: opts.issuedTime ?? '2026-04-19T01:15:00Z',
     content: { type: 'text', text, messageId: 'msg-1' },
   });
@@ -63,7 +72,7 @@ const ISO_FALLBACK = '2026-04-19T01:15:00Z';
 
 const STANDARD_DB = () =>
   makeDb({
-    drivers: [{ id: 10, name: '山田太郎' }],
+    drivers: [{ id: 10, name: '山田太郎', lineworks_user_id: 'uuid-driver-1' }],
     locations: [
       { id: 1, name: '会社' },
       { id: 2, name: 'A病院' },
@@ -139,7 +148,7 @@ test('invalid: not_a_soutei_message (no #送迎 header)', async () => {
   assert.equal(f.calls.length, 0);
 });
 
-test('invalid: driver_not_registered → 運転者名が未登録です', async () => {
+test('invalid: driver_user_id_not_registered → LINE WORKS ユーザーID未登録です', async () => {
   const f = makeForward({ ok: true, status: 200, attempts: 1 });
   const r = await processInboxRow(
     body(
@@ -150,15 +159,15 @@ test('invalid: driver_not_registered → 運転者名が未登録です', async 
 A病院
 100
 150`,
-      { senderName: '知らない人' },
+      { userId: 'uuid-unknown' },
     ),
     ISO_FALLBACK,
     { db: STANDARD_DB(), forward: f.fn },
   );
   assert.equal(r.terminal, 'invalid');
   if (r.terminal !== 'invalid') return;
-  assert.equal(r.code, 'driver_not_registered');
-  assert.equal(r.userMessage, '運転者名が未登録です');
+  assert.equal(r.code, 'driver_user_id_not_registered');
+  assert.equal(r.userMessage, 'LINE WORKS ユーザーID未登録です');
   assert.equal(f.calls.length, 0);
 });
 
@@ -230,7 +239,7 @@ C
 
 test('invalid: distance_not_registered when a route_distances leg is missing', async () => {
   const db = makeDb({
-    drivers: [{ id: 10, name: '山田太郎' }],
+    drivers: [{ id: 10, name: '山田太郎', lineworks_user_id: 'uuid-driver-1' }],
     locations: [
       { id: 1, name: '会社' },
       { id: 2, name: 'A病院' },
@@ -265,7 +274,7 @@ B老人ホーム
 test('バス: skips route_distances lookup (fromId may be null)', async () => {
   const f = makeForward({ ok: true, status: 200, attempts: 1 });
   const db = makeDb({
-    drivers: [{ id: 10, name: '山田太郎' }],
+    drivers: [{ id: 10, name: '山田太郎', lineworks_user_id: 'uuid-driver-1' }],
     locations: [{ id: 2, name: 'A病院' }],
     // intentionally no route_distances — must not block bus flow
   });
@@ -289,7 +298,7 @@ A病院
 
 test('invalid: fare_not_registered when a leg fare is missing', async () => {
   const db = makeDb({
-    drivers: [{ id: 10, name: '山田太郎' }],
+    drivers: [{ id: 10, name: '山田太郎', lineworks_user_id: 'uuid-driver-1' }],
     locations: [
       { id: 1, name: '会社' },
       { id: 2, name: 'A病院' },
@@ -315,10 +324,10 @@ B老人ホーム
   assert.equal(r.code, 'fare_not_registered');
 });
 
-test('invalid: missing_sender_name', async () => {
+test('invalid: missing_sender_user_id when source.userId is absent', async () => {
   const raw = JSON.stringify({
     type: 'message',
-    source: { userId: 'u-1' },
+    source: {},
     issuedTime: '2026-04-19T01:15:00Z',
     content: { type: 'text', text: '#送迎\nハイエース\n通常ルート\n会社\nA病院\n100\n150' },
   });
@@ -326,7 +335,22 @@ test('invalid: missing_sender_name', async () => {
   const r = await processInboxRow(raw, ISO_FALLBACK, { db: STANDARD_DB(), forward: f.fn });
   assert.equal(r.terminal, 'invalid');
   if (r.terminal !== 'invalid') return;
-  assert.equal(r.code, 'missing_sender_name');
+  assert.equal(r.code, 'missing_sender_user_id');
+});
+
+test('accepts ms-epoch createdTime as the message timestamp', async () => {
+  const f = makeForward({ ok: true, status: 200, attempts: 1 });
+  const ms = Date.UTC(2026, 3, 19, 1, 15, 0); // 2026-04-19T01:15:00Z
+  const raw = JSON.stringify({
+    type: 'message',
+    source: { userId: 'uuid-driver-1' },
+    createdTime: ms,
+    content: { type: 'text', text: '#送迎\nハイエース\n通常ルート\n会社\nA病院\n100\n150' },
+  });
+  const r = await processInboxRow(raw, ISO_FALLBACK, { db: STANDARD_DB(), forward: f.fn });
+  assert.equal(r.terminal, 'forwarded');
+  if (r.terminal !== 'forwarded') return;
+  assert.equal(f.calls[0].日付, '2026/4/19 10:15');
 });
 
 test('failed: forward returns non-ok → terminal failed (not invalid)', async () => {

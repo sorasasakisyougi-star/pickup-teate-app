@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-type DriverRow = { id: number; name: string };
+type DriverRow = { id: number; name: string; lineworks_user_id: string | null };
 type VehicleRow = { id: number; name: string };
 type LocationRow = { id: number; name: string; kind?: string | null };
 type FareRow = { from_id: number; to_id: number; amount_yen: number };
@@ -58,6 +58,7 @@ export default function AdminPage() {
   const [fares, setFares] = useState<FareRow[]>([]);
 
   const [newDriverName, setNewDriverName] = useState("");
+  const [newDriverLineWorksUserId, setNewDriverLineWorksUserId] = useState("");
   const [newVehicleName, setNewVehicleName] = useState("");
   const [newLocationName, setNewLocationName] = useState("");
 
@@ -78,6 +79,18 @@ export default function AdminPage() {
   async function apiPost(path: string, body: any) {
     const res = await fetch(path, {
       method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-admin-key": adminKey,
+      },
+      body: JSON.stringify(body),
+    });
+    return readJson(res);
+  }
+
+  async function apiPatch(path: string, body: any) {
+    const res = await fetch(path, {
+      method: "PATCH",
       headers: {
         "content-type": "application/json",
         "x-admin-key": adminKey,
@@ -265,13 +278,32 @@ export default function AdminPage() {
     if (!newDriverName.trim()) return;
     try {
       setStatus("");
-      await apiPost("/api/admin/drivers", { name: newDriverName.trim() });
+      await apiPost("/api/admin/drivers", {
+        name: newDriverName.trim(),
+        lineworks_user_id: newDriverLineWorksUserId.trim() || null,
+      });
       localStorage.setItem("pickup_masters_updated_at", String(Date.now()));
       setNewDriverName("");
+      setNewDriverLineWorksUserId("");
       setStatus("運転手を追加しました");
       await reloadAll();
     } catch (e: any) {
       setStatus(describeMutationError(e, "追加失敗"));
+    }
+  }
+
+  async function updateDriverLineWorksUserId(id: number, value: string) {
+    try {
+      setStatus("");
+      await apiPatch("/api/admin/drivers", {
+        id,
+        lineworks_user_id: value.trim() || null,
+      });
+      localStorage.setItem("pickup_masters_updated_at", String(Date.now()));
+      setStatus("LINE WORKS ユーザーIDを更新しました");
+      await reloadAll();
+    } catch (e: any) {
+      setStatus(describeMutationError(e, "更新失敗"));
     }
   }
 
@@ -479,12 +511,18 @@ export default function AdminPage() {
         <div className="space-y-6">
           <section className="rounded-[24px] border border-white/10 bg-white/[0.03] p-4">
             <h2 className="mb-4 text-2xl font-extrabold">運転手を追加</h2>
-            <div className="flex flex-col gap-3 sm:flex-row">
+            <div className="flex flex-col gap-3">
               <input
                 value={newDriverName}
                 onChange={(e) => setNewDriverName(e.target.value)}
                 placeholder="運転手名"
                 className="min-h-[56px] flex-1 rounded-[18px] border border-white/10 bg-black/20 px-4 text-xl text-white outline-none"
+              />
+              <input
+                value={newDriverLineWorksUserId}
+                onChange={(e) => setNewDriverLineWorksUserId(e.target.value)}
+                placeholder="LINE WORKS ユーザーID (任意、送迎Bot運用時に必須)"
+                className="min-h-[56px] flex-1 rounded-[18px] border border-white/10 bg-black/20 px-4 text-base font-mono text-white outline-none"
               />
               <button
                 type="button"
@@ -494,6 +532,10 @@ export default function AdminPage() {
                 追加
               </button>
             </div>
+            <p className="mt-3 text-sm text-white/60">
+              送迎Bot でこの運転手を受け付けるには、LINE WORKS の source.userId
+              (UUID形式) を登録してください。空欄のまま追加しても後から編集できます。
+            </p>
           </section>
 
           <section className="rounded-[24px] border border-white/10 bg-white/[0.03] p-4">
@@ -587,9 +629,12 @@ export default function AdminPage() {
           >
             <div className="space-y-3">
               {drivers.map((d) => (
-                <RowCard
+                <DriverEditRow
                   key={`driver-${d.id}`}
-                  label={d.name}
+                  driver={d}
+                  onSaveLineWorksUserId={(value) =>
+                    updateDriverLineWorksUserId(d.id, value)
+                  }
                   onDelete={() => deleteDriver(d.id)}
                 />
               ))}
@@ -695,6 +740,68 @@ function RowCard({
       >
         削除
       </button>
+    </div>
+  );
+}
+
+function DriverEditRow({
+  driver,
+  onSaveLineWorksUserId,
+  onDelete,
+}: {
+  driver: DriverRow;
+  onSaveLineWorksUserId: (value: string) => void;
+  onDelete: () => void;
+}) {
+  const [value, setValue] = useState(driver.lineworks_user_id ?? "");
+  useEffect(() => {
+    setValue(driver.lineworks_user_id ?? "");
+  }, [driver.lineworks_user_id]);
+  const trimmed = value.trim();
+  const current = driver.lineworks_user_id ?? "";
+  const dirty = trimmed !== current;
+  const missing = !current;
+  return (
+    <div className="flex flex-col gap-2 rounded-[18px] border border-white/10 bg-black/20 px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-lg font-semibold text-white">{driver.name}</div>
+        <button
+          type="button"
+          onClick={onDelete}
+          className="min-h-[42px] rounded-[14px] border border-red-400/30 bg-red-500/15 px-4 text-sm font-bold text-red-300"
+        >
+          削除
+        </button>
+      </div>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <input
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="LINE WORKS ユーザーID (UUID)"
+          className={`min-h-[44px] flex-1 rounded-[12px] border px-3 text-sm font-mono text-white outline-none ${
+            missing
+              ? "border-amber-400/40 bg-amber-500/10"
+              : "border-white/10 bg-black/30"
+          }`}
+        />
+        <button
+          type="button"
+          disabled={!dirty}
+          onClick={() => onSaveLineWorksUserId(trimmed)}
+          className={`min-h-[44px] rounded-[12px] px-4 text-sm font-bold ${
+            dirty
+              ? "border border-blue-400/30 bg-[#3158d8] text-white"
+              : "border border-white/10 bg-white/5 text-white/40"
+          }`}
+        >
+          保存
+        </button>
+      </div>
+      {missing && (
+        <div className="text-xs text-amber-300">
+          未登録です。送迎Bot 受信を有効にする前に UUID を入力してください。
+        </div>
+      )}
     </div>
   );
 }

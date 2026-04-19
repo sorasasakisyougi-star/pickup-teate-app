@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   resolveDriverByName,
+  resolveDriverByLineWorksUserId,
   resolveRouteLocations,
   computeFareYen,
   resolveSegmentDistances,
@@ -13,8 +14,10 @@ import {
   type RouteDistanceRow,
 } from '../../lib/lineworks/enrich';
 
+type DriverFixture = NamedRow & { lineworks_user_id?: string | null };
+
 function makeDb(init: {
-  drivers?: NamedRow[];
+  drivers?: DriverFixture[];
   locations?: NamedRow[];
   fares?: FareRow[];
   routeDistances?: RouteDistanceRow[];
@@ -26,6 +29,10 @@ function makeDb(init: {
   return {
     async findDriverByName(name) {
       return drivers.find((d) => d.name === name) ?? null;
+    },
+    async findDriverByLineWorksUserId(userId) {
+      const d = drivers.find((x) => x.lineworks_user_id === userId);
+      return d ? { id: d.id, name: d.name } : null;
     },
     async findLocationByName(name) {
       return locations.find((l) => l.name === name) ?? null;
@@ -63,6 +70,39 @@ test('resolveDriverByName — trims whitespace', async () => {
 test('resolveDriverByName — empty string is null', async () => {
   const db = makeDb({ drivers: [{ id: 10, name: '山田太郎' }] });
   assert.equal(await resolveDriverByName(db, '   '), null);
+});
+
+// --- resolveDriverByLineWorksUserId ---------------------------------------
+
+test('resolveDriverByLineWorksUserId — UUID match resolves driver', async () => {
+  const db = makeDb({
+    drivers: [
+      { id: 10, name: '山田太郎', lineworks_user_id: 'uuid-1' },
+      { id: 11, name: '鈴木花子', lineworks_user_id: 'uuid-2' },
+    ],
+  });
+  const r = await resolveDriverByLineWorksUserId(db, 'uuid-2');
+  assert.deepEqual(r, { id: 11, name: '鈴木花子' });
+});
+
+test('resolveDriverByLineWorksUserId — returns null for unknown UUID', async () => {
+  const db = makeDb({
+    drivers: [{ id: 10, name: '山田太郎', lineworks_user_id: 'uuid-1' }],
+  });
+  assert.equal(await resolveDriverByLineWorksUserId(db, 'uuid-unknown'), null);
+});
+
+test('resolveDriverByLineWorksUserId — empty string returns null', async () => {
+  const db = makeDb({ drivers: [] });
+  assert.equal(await resolveDriverByLineWorksUserId(db, '   '), null);
+});
+
+test('resolveDriverByLineWorksUserId — trims whitespace', async () => {
+  const db = makeDb({
+    drivers: [{ id: 10, name: '山田太郎', lineworks_user_id: 'uuid-1' }],
+  });
+  const r = await resolveDriverByLineWorksUserId(db, '  uuid-1  ');
+  assert.deepEqual(r, { id: 10, name: '山田太郎' });
 });
 
 // --- resolveRouteLocations -------------------------------------------------
