@@ -8,6 +8,7 @@ import {
   resolveDriverByName,
   resolveRouteLocations,
   computeFareYen,
+  resolveSegmentDistances,
   type EnrichDbClient,
 } from './enrich';
 import { buildV1Payload, type V1Payload } from './mapper';
@@ -37,6 +38,7 @@ export type InvalidCode =
   | 'driver_not_registered'
   | 'location_not_registered'
   | 'fare_not_registered'
+  | 'distance_not_registered'
   | 'missing_message_body'
   | 'missing_sender_name'
   | 'missing_message_timestamp';
@@ -93,6 +95,7 @@ const invalidMessages: Record<InvalidCode, string> = {
   driver_not_registered: '運転者名が未登録です',
   location_not_registered: '場所名が未登録です',
   fare_not_registered: '料金マスタが未登録です',
+  distance_not_registered: '区間距離マスタが未登録です',
   missing_message_body: '入力形式が違います',
   missing_sender_name: '送信者名が取得できません',
   missing_message_timestamp: '送信時刻が取得できません',
@@ -180,10 +183,32 @@ export async function processInboxRow(
   }
   if (fareYen == null) return invalid('fare_not_registered');
 
+  // 通常ルート: require a route_distances row for every leg. Missing → invalid.
+  // バス: distances aren't contractually defined (from may be "-") → skip lookup.
+  let segmentDistances: number[] | undefined;
+  if (!parsed.data.isBus && fromId != null) {
+    try {
+      const segs = await resolveSegmentDistances(
+        deps.db,
+        fromId,
+        arrivalIds as number[],
+      );
+      if (segs == null) return invalid('distance_not_registered');
+      segmentDistances = segs;
+    } catch (e) {
+      return {
+        terminal: 'failed',
+        error: e instanceof Error ? e.message : 'route_distances_query_failed',
+        attempts: 0,
+      };
+    }
+  }
+
   const payload = buildV1Payload(parsed.data, {
     driverName: driver.name,
     messageTimestamp,
     fareYen,
+    segmentDistances,
   });
 
   const result = await deps.forward(payload);

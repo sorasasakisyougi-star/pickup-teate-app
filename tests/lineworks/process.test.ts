@@ -2,7 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { processInboxRow } from '../../lib/lineworks/process';
-import type { EnrichDbClient, NamedRow, FareRow } from '../../lib/lineworks/enrich';
+import type {
+  EnrichDbClient,
+  NamedRow,
+  FareRow,
+  RouteDistanceRow,
+} from '../../lib/lineworks/enrich';
 import type { V1Payload } from '../../lib/lineworks/mapper';
 import type { ForwardResult } from '../../lib/lineworks/forward';
 
@@ -10,10 +15,12 @@ function makeDb(init: {
   drivers?: NamedRow[];
   locations?: NamedRow[];
   fares?: FareRow[];
+  routeDistances?: RouteDistanceRow[];
 }): EnrichDbClient {
   const drivers = init.drivers ?? [];
   const locations = init.locations ?? [];
   const fares = init.fares ?? [];
+  const routes = init.routeDistances ?? [];
   return {
     async findDriverByName(name) {
       return drivers.find((d) => d.name === name) ?? null;
@@ -23,6 +30,11 @@ function makeDb(init: {
     },
     async findFare(fromId, toId) {
       return fares.find((f) => f.from_id === fromId && f.to_id === toId) ?? null;
+    },
+    async findRouteDistance(fromId, toId) {
+      return (
+        routes.find((r) => r.from_location_id === fromId && r.to_location_id === toId) ?? null
+      );
     },
   };
 }
@@ -61,6 +73,10 @@ const STANDARD_DB = () =>
       { from_id: 1, to_id: 2, amount_yen: 700 },
       { from_id: 2, to_id: 3, amount_yen: 500 },
     ],
+    routeDistances: [
+      { from_location_id: 1, to_location_id: 2, distance_km: 5.2 },
+      { from_location_id: 2, to_location_id: 3, distance_km: 3.1 },
+    ],
   });
 
 test('full pipeline: 通常ルート → forwarded with payload', async () => {
@@ -83,7 +99,10 @@ B老人ホーム
   assert.equal(f.calls.length, 1);
   assert.equal(f.calls[0].運転者, '山田太郎');
   assert.equal(f.calls[0]['金額（円）'], 1200);
-  assert.equal(f.calls[0]['総走行距離（km）'], 26);
+  // Per Phase 2c-fix-1: total = sum of segment distances from route_distances.
+  assert.equal(f.calls[0]['距離（始）〜到着１'], 5.2);
+  assert.equal(f.calls[0]['距離（到着１〜到着２）'], 3.1);
+  assert.equal(Number(f.calls[0]['総走行距離（km）']).toFixed(1), '8.3');
   assert.equal(f.calls[0].日付, '2026/4/19 10:15');
 });
 
@@ -206,6 +225,65 @@ C
   if (r.terminal !== 'invalid') return;
   assert.equal(r.code, 'missing_odo');
   assert.equal(r.userMessage, 'ODO始/ODO終がありません');
+});
+
+test('invalid: distance_not_registered when a route_distances leg is missing', async () => {
+  const db = makeDb({
+    drivers: [{ id: 10, name: '山田太郎' }],
+    locations: [
+      { id: 1, name: '会社' },
+      { id: 2, name: 'A病院' },
+      { id: 3, name: 'B老人ホーム' },
+    ],
+    fares: [
+      { from_id: 1, to_id: 2, amount_yen: 700 },
+      { from_id: 2, to_id: 3, amount_yen: 500 },
+    ],
+    routeDistances: [{ from_location_id: 1, to_location_id: 2, distance_km: 5.2 }], // no 2↔3
+  });
+  const f = makeForward({ ok: true, status: 200, attempts: 1 });
+  const r = await processInboxRow(
+    body(`#送迎
+ハイエース
+通常ルート
+会社
+A病院
+B老人ホーム
+100
+200`),
+    ISO_FALLBACK,
+    { db, forward: f.fn },
+  );
+  assert.equal(r.terminal, 'invalid');
+  if (r.terminal !== 'invalid') return;
+  assert.equal(r.code, 'distance_not_registered');
+  assert.equal(r.userMessage, '区間距離マスタが未登録です');
+  assert.equal(f.calls.length, 0);
+});
+
+test('バス: skips route_distances lookup (fromId may be null)', async () => {
+  const f = makeForward({ ok: true, status: 200, attempts: 1 });
+  const db = makeDb({
+    drivers: [{ id: 10, name: '山田太郎' }],
+    locations: [{ id: 2, name: 'A病院' }],
+    // intentionally no route_distances — must not block bus flow
+  });
+  const r = await processInboxRow(
+    body(`#送迎
+ハイエース
+バス
+-
+A病院
+100
+150`),
+    ISO_FALLBACK,
+    { db, forward: f.fn },
+  );
+  assert.equal(r.terminal, 'forwarded');
+  if (r.terminal !== 'forwarded') return;
+  // Bus: no segment distances; total falls back to odoEnd-odoStart.
+  assert.equal(f.calls[0]['距離（始）〜到着１'], '');
+  assert.equal(f.calls[0]['総走行距離（km）'], 50);
 });
 
 test('invalid: fare_not_registered when a leg fare is missing', async () => {

@@ -44,6 +44,14 @@ export function openInboxDb(dbPath?: string): Database.Database {
     db.exec('ALTER TABLE lw_inbox ADD COLUMN message_id TEXT');
   }
   db.exec('CREATE INDEX IF NOT EXISTS idx_lw_inbox_message_id ON lw_inbox(message_id)');
+  // Phase 2c-fix-2: message_id wins idempotency when present. A partial unique
+  // index on (bot_id, message_id) WHERE message_id IS NOT NULL makes retries
+  // that reuse the same messageId (but vary the body) a no-op at INSERT OR
+  // IGNORE time, without affecting rows where message_id is NULL.
+  db.exec(
+    'CREATE UNIQUE INDEX IF NOT EXISTS unique_lw_inbox_bot_message_id ' +
+    'ON lw_inbox(bot_id, message_id) WHERE message_id IS NOT NULL',
+  );
   return db;
 }
 

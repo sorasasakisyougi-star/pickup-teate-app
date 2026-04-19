@@ -5,20 +5,24 @@ import {
   resolveDriverByName,
   resolveRouteLocations,
   computeFareYen,
+  resolveSegmentDistances,
   BUS_FARE_YEN,
   type EnrichDbClient,
   type NamedRow,
   type FareRow,
+  type RouteDistanceRow,
 } from '../../lib/lineworks/enrich';
 
 function makeDb(init: {
   drivers?: NamedRow[];
   locations?: NamedRow[];
   fares?: FareRow[];
+  routeDistances?: RouteDistanceRow[];
 }): EnrichDbClient {
   const drivers = init.drivers ?? [];
   const locations = init.locations ?? [];
   const fares = init.fares ?? [];
+  const routes = init.routeDistances ?? [];
   return {
     async findDriverByName(name) {
       return drivers.find((d) => d.name === name) ?? null;
@@ -28,6 +32,11 @@ function makeDb(init: {
     },
     async findFare(fromId, toId) {
       return fares.find((f) => f.from_id === fromId && f.to_id === toId) ?? null;
+    },
+    async findRouteDistance(fromId, toId) {
+      return (
+        routes.find((r) => r.from_location_id === fromId && r.to_location_id === toId) ?? null
+      );
     },
   };
 }
@@ -135,4 +144,35 @@ test('computeFareYen — normal: empty arrivals returns null', async () => {
 test('computeFareYen — normal: any null arrivalId returns null', async () => {
   const db = makeDb({});
   assert.equal(await computeFareYen(db, 1, [2, null], false), null);
+});
+
+// --- resolveSegmentDistances ----------------------------------------------
+
+test('resolveSegmentDistances — pairwise lookup', async () => {
+  const db = makeDb({
+    routeDistances: [
+      { from_location_id: 1, to_location_id: 2, distance_km: 5.2 },
+      { from_location_id: 2, to_location_id: 3, distance_km: 3.1 },
+    ],
+  });
+  assert.deepEqual(await resolveSegmentDistances(db, 1, [2, 3]), [5.2, 3.1]);
+});
+
+test('resolveSegmentDistances — reverse-direction fallback', async () => {
+  const db = makeDb({
+    routeDistances: [{ from_location_id: 2, to_location_id: 1, distance_km: 7.5 }],
+  });
+  assert.deepEqual(await resolveSegmentDistances(db, 1, [2]), [7.5]);
+});
+
+test('resolveSegmentDistances — returns null when any leg missing', async () => {
+  const db = makeDb({
+    routeDistances: [{ from_location_id: 1, to_location_id: 2, distance_km: 5.2 }],
+  });
+  assert.equal(await resolveSegmentDistances(db, 1, [2, 3]), null);
+});
+
+test('resolveSegmentDistances — empty arrivals returns null', async () => {
+  const db = makeDb({});
+  assert.equal(await resolveSegmentDistances(db, 1, []), null);
 });

@@ -72,6 +72,66 @@ test('insertInbox is idempotent on duplicate hash', () => {
   assert.equal(r2.inserted, false);
 });
 
+// Phase 2c-fix-2: message_id wins dedup even when raw_body (and therefore
+// message_hash) differs between the retry and the first delivery.
+test('insertInbox dedups on (bot_id, message_id) even when raw body differs', () => {
+  const dbPath = tempDbPath();
+  const r1 = insertInbox(
+    {
+      messageHash: 'hash-A',
+      messageId: 'msg-same',
+      botId: 'bot-1',
+      eventType: 'message',
+      rawBody: '{"v":1}',
+    },
+    dbPath,
+  );
+  const r2 = insertInbox(
+    {
+      messageHash: 'hash-B', // different body → different hash
+      messageId: 'msg-same',
+      botId: 'bot-1',
+      eventType: 'message',
+      rawBody: '{"v":2}',
+    },
+    dbPath,
+  );
+  assert.equal(r1.inserted, true);
+  assert.equal(r2.inserted, false);
+  // The stored row is the first one — second insert must not overwrite.
+  const row = getInboxByHash('hash-A', dbPath);
+  assert.equal(row!.raw_body, '{"v":1}');
+  assert.equal(getInboxByHash('hash-B', dbPath), null);
+});
+
+test('insertInbox allows same message_id across different bots (scoped dedup)', () => {
+  const dbPath = tempDbPath();
+  const r1 = insertInbox(
+    { messageHash: 'h1', messageId: 'shared', botId: 'bot-1', eventType: 'message', rawBody: '{}' },
+    dbPath,
+  );
+  const r2 = insertInbox(
+    { messageHash: 'h2', messageId: 'shared', botId: 'bot-2', eventType: 'message', rawBody: '{}' },
+    dbPath,
+  );
+  assert.equal(r1.inserted, true);
+  assert.equal(r2.inserted, true);
+});
+
+test('insertInbox does NOT collide when message_id is null (falls back to hash only)', () => {
+  const dbPath = tempDbPath();
+  const r1 = insertInbox(
+    { messageHash: 'ha', messageId: null, botId: 'bot-1', eventType: 'message', rawBody: 'a' },
+    dbPath,
+  );
+  const r2 = insertInbox(
+    { messageHash: 'hb', messageId: null, botId: 'bot-1', eventType: 'message', rawBody: 'b' },
+    dbPath,
+  );
+  assert.equal(r1.inserted, true);
+  assert.equal(r2.inserted, true);
+});
+
 test('getInboxByHash returns null for unknown hash', () => {
   const dbPath = tempDbPath();
   openInboxDb(dbPath);

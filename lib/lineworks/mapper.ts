@@ -55,6 +55,14 @@ export type MapperContext = {
   driverName: string;
   messageTimestamp: Date;
   fareYen: number;
+  /**
+   * Per-segment distances in km from the route_distances master: from→a1,
+   * a1→a2, …, a_{n-1}→a_n. When provided (通常ルート), the mapper populates
+   * 距離（始）〜到着１..到着７〜到着８ and derives 総走行距離 from the sum.
+   * When omitted (バス or fallback), segments stay empty and total falls
+   * back to odoEnd-odoStart.
+   */
+  segmentDistances?: ReadonlyArray<number>;
   departPhotoUrl?: string;
   arrivalPhotoUrls?: ReadonlyArray<string>;
 };
@@ -108,12 +116,31 @@ function padSlots(values: ReadonlyArray<string> | undefined): [
   return slots as [string, string, string, string, string, string, string, string];
 }
 
+function padNumericSlots(
+  values: ReadonlyArray<number> | undefined,
+): [
+  number | '', number | '', number | '', number | '',
+  number | '', number | '', number | '', number | '',
+] {
+  const slots: (number | '')[] = ['', '', '', '', '', '', '', ''];
+  if (values) for (let i = 0; i < Math.min(values.length, 8); i++) slots[i] = values[i];
+  return slots as [
+    number | '', number | '', number | '', number | '',
+    number | '', number | '', number | '', number | '',
+  ];
+}
+
 export function buildV1Payload(parsed: ParsedMessage, ctx: MapperContext): V1Payload {
   const [a1, a2, a3, a4, a5, a6, a7, a8] = padSlots(parsed.arrivals);
   const [p1, p2, p3, p4, p5, p6, p7, p8] = padSlots(ctx.arrivalPhotoUrls);
+  const [d1, d2, d3, d4, d5, d6, d7, d8] = padNumericSlots(ctx.segmentDistances);
 
+  // Total走行距離: if we have segments (通常ルート), sum them; otherwise fall
+  // back to the driver's reported ODO delta. See Phase 2c-fix-1 spec.
   const totalDistance =
-    Number.isFinite(parsed.odoEnd) && Number.isFinite(parsed.odoStart)
+    ctx.segmentDistances && ctx.segmentDistances.length > 0
+      ? ctx.segmentDistances.reduce((a, b) => a + b, 0)
+      : Number.isFinite(parsed.odoEnd) && Number.isFinite(parsed.odoStart)
       ? Math.max(0, parsed.odoEnd - parsed.odoStart)
       : '';
 
@@ -135,16 +162,14 @@ export function buildV1Payload(parsed: ParsedMessage, ctx: MapperContext): V1Pay
     '金額（円）': ctx.fareYen,
     '距離（始）': parsed.odoStart,
     '距離（終）': parsed.odoEnd,
-    // Per-segment distances unavailable from LW body (no per-arrival odometer).
-    // Leave blank — total is the real odometer delta below.
-    '距離（始）〜到着１': '',
-    '距離（到着１〜到着２）': '',
-    '距離（到着２〜到着３）': '',
-    '距離（到着３〜到着４）': '',
-    '距離（到着４〜到着５）': '',
-    '距離（到着５〜到着６）': '',
-    '距離（到着６〜到着７）': '',
-    '距離（到着７〜到着８）': '',
+    '距離（始）〜到着１': d1,
+    '距離（到着１〜到着２）': d2,
+    '距離（到着２〜到着３）': d3,
+    '距離（到着３〜到着４）': d4,
+    '距離（到着４〜到着５）': d5,
+    '距離（到着５〜到着６）': d6,
+    '距離（到着６〜到着７）': d7,
+    '距離（到着７〜到着８）': d8,
     '総走行距離（km）': totalDistance,
     '想定距離（km）': '',
     '超過距離（km）': '',

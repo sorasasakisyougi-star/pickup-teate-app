@@ -4,11 +4,17 @@
 
 export type NamedRow = { id: number; name: string };
 export type FareRow = { from_id: number; to_id: number; amount_yen: number };
+export type RouteDistanceRow = {
+  from_location_id: number;
+  to_location_id: number;
+  distance_km: number;
+};
 
 export type EnrichDbClient = {
   findDriverByName(name: string): Promise<NamedRow | null>;
   findLocationByName(name: string): Promise<NamedRow | null>;
   findFare(fromId: number, toId: number): Promise<FareRow | null>;
+  findRouteDistance(fromId: number, toId: number): Promise<RouteDistanceRow | null>;
 };
 
 // Single bus fare is fixed — mirrors app/page.tsx:561 (`if (mode === "bus") return 2000`).
@@ -81,6 +87,40 @@ async function findFareAnyDirection(
   return reverse?.amount_yen ?? null;
 }
 
+/**
+ * Resolve the per-segment distances (from→a1, a1→a2, …, a_{n-1}→a_n) against
+ * the route_distances master. Tries direct (from,to) then reverse (to,from).
+ * Returns null if ANY segment is missing — caller marks the row invalid.
+ * The returned array has length == arrivalIds.length.
+ */
+export async function resolveSegmentDistances(
+  db: EnrichDbClient,
+  fromId: number,
+  arrivalIds: ReadonlyArray<number>,
+): Promise<number[] | null> {
+  if (arrivalIds.length === 0) return null;
+  const out: number[] = [];
+  let cur = fromId;
+  for (const next of arrivalIds) {
+    const km = await findRouteDistanceAnyDirection(db, cur, next);
+    if (km == null) return null;
+    out.push(km);
+    cur = next;
+  }
+  return out;
+}
+
+async function findRouteDistanceAnyDirection(
+  db: EnrichDbClient,
+  a: number,
+  b: number,
+): Promise<number | null> {
+  const direct = await db.findRouteDistance(a, b);
+  if (direct) return direct.distance_km;
+  const reverse = await db.findRouteDistance(b, a);
+  return reverse?.distance_km ?? null;
+}
+
 // --- Supabase adapter ------------------------------------------------------
 
 type SupabaseLike = {
@@ -128,6 +168,15 @@ export function createSupabaseEnrichClient(supabase: SupabaseLike): EnrichDbClie
         .match({ from_id: fromId, to_id: toId })
         .maybeSingle<FareRow>();
       if (res.error) throw new Error('fares_query_failed');
+      return res.data ?? null;
+    },
+    async findRouteDistance(fromId, toId) {
+      const res = await supabase
+        .from('route_distances')
+        .select('from_location_id,to_location_id,distance_km')
+        .match({ from_location_id: fromId, to_location_id: toId })
+        .maybeSingle<RouteDistanceRow>();
+      if (res.error) throw new Error('route_distances_query_failed');
       return res.data ?? null;
     },
   };
