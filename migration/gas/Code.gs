@@ -123,18 +123,21 @@ function saveReport(payload) {
       throw new Error('vehicle_not_registered');
     }
 
-    // from + arrivals の全要素は 地点マスタに存在するか
-    var locations = loadLocationNames_();
-    if (locations.indexOf(payload.from) === -1) {
-      logPost_(reportedAtServer, userId, 'saveReport', 'error', 'location_not_registered:' + payload.from);
-      throw new Error('location_not_registered');
-    }
-    for (var i = 0; i < payload.arrivals.length; i++) {
-      var a = payload.arrivals[i];
-      if (!a) continue;
-      if (locations.indexOf(a) === -1) {
-        logPost_(reportedAtServer, userId, 'saveReport', 'error', 'location_not_registered:' + a);
+    // from + arrivals の全要素は 地点マスタに存在するか (通常ルートのみ)。
+    // バスは既存本線と同じく from / arrivals を空で保存するので地点マスタ照合しない。
+    if (payload.mode === '通常ルート') {
+      var locations = loadLocationNames_();
+      if (locations.indexOf(payload.from) === -1) {
+        logPost_(reportedAtServer, userId, 'saveReport', 'error', 'location_not_registered:' + payload.from);
         throw new Error('location_not_registered');
+      }
+      for (var i = 0; i < payload.arrivals.length; i++) {
+        var a = payload.arrivals[i];
+        if (!a) continue;
+        if (locations.indexOf(a) === -1) {
+          logPost_(reportedAtServer, userId, 'saveReport', 'error', 'location_not_registered:' + a);
+          throw new Error('location_not_registered');
+        }
       }
     }
 
@@ -222,12 +225,16 @@ function validatePayload_(p) {
   if (p.mode !== '通常ルート' && p.mode !== 'バス') {
     return { ok: false, error: 'invalid_mode' };
   }
-  if (!p.from) return { ok: false, error: 'missing_from' };
-  var arrivals = Array.isArray(p.arrivals)
-    ? p.arrivals.filter(function(a) { return a && String(a).trim(); })
-    : [];
-  if (arrivals.length === 0) return { ok: false, error: 'missing_arrivals' };
-  if (arrivals.length > 8) return { ok: false, error: 'too_many_arrivals' };
+  // バスは from / arrivals を問わない (既存本線 pages/api/powerautomate.ts:1023-1024 と揃える)。
+  // 通常ルートのみ from 必須 + arrivals 1..8。
+  if (p.mode === '通常ルート') {
+    if (!p.from) return { ok: false, error: 'missing_from' };
+    var arrivals = Array.isArray(p.arrivals)
+      ? p.arrivals.filter(function(a) { return a && String(a).trim(); })
+      : [];
+    if (arrivals.length === 0) return { ok: false, error: 'missing_arrivals' };
+    if (arrivals.length > 8) return { ok: false, error: 'too_many_arrivals' };
+  }
   var s = Number(p.odoStart), e = Number(p.odoEnd);
   if (!isFinite(s) || !isFinite(e)) return { ok: false, error: 'missing_odo' };
   if (e < s) return { ok: false, error: 'odo_end_before_start' };
@@ -275,9 +282,16 @@ function resolveTotalKm_(payload) {
 // --- Row assembly (sheet-schema.md の列順と一致) -------------------------
 
 function buildRow_(p, fareYen, totalKm, displayName, driverName, reportedAtServer) {
-  var arrivals = (p.arrivals || []).filter(function(a) { return a && String(a).trim(); });
-  var padded = arrivals.slice(0, 8);
+  // バスモードでは既存本線 (pages/api/powerautomate.ts:1023-1024) と揃えて
+  // 出発地 (F) と 到着1..8 (G..N) を空欄で書き込む。通常ルートのみ値を入れる。
+  var isBus = (p.mode === 'バス');
+  var effectiveFrom = isBus ? '' : (p.from || '');
+  var effectiveArrivals = isBus
+    ? []
+    : (p.arrivals || []).filter(function(a) { return a && String(a).trim(); });
+  var padded = effectiveArrivals.slice(0, 8);
   while (padded.length < 8) padded.push('');
+
   var dateDisplay = Utilities.formatDate(reportedAtServer, 'Asia/Tokyo', 'yyyy/M/d');
   var reportedIso = Utilities.formatDate(reportedAtServer, 'Asia/Tokyo', "yyyy-MM-dd'T'HH:mm:ssXXX");
 
@@ -287,8 +301,8 @@ function buildRow_(p, fareYen, totalKm, displayName, driverName, reportedAtServe
     driverName,         // C: 運転者 (allowlist.driver_name 正本)
     p.vehicle,          // D: 車両
     p.mode,             // E: 区分
-    p.from,             // F: 出発地
-    padded[0],          // G: 到着1
+    effectiveFrom,      // F: 出発地 (バス時は '')
+    padded[0],          // G: 到着1 (バス時は '')
     padded[1],          // H: 到着2
     padded[2],          // I: 到着3
     padded[3],          // J: 到着4

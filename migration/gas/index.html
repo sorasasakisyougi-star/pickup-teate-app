@@ -143,6 +143,8 @@
       var sel = document.createElement('select');
       sel.name = 'arrival';
       renderLocationOptions(sel, state.locations);
+      // バスモード中の追加行は最初から disabled にしておく
+      if (state.mode === 'バス') sel.disabled = true;
       row.appendChild(sel);
       var btn = document.createElement('button');
       btn.type = 'button'; btn.className = 'remove'; btn.textContent = '×';
@@ -178,12 +180,38 @@
       show($('#form'));
     }
 
+    function applyModeUI_() {
+      // バスモードは from / arrivals を問わない (既存本線と揃える)。
+      // 通常ルートは from 必須 + arrivals 1件以上。
+      var isBus = state.mode === 'バス';
+      var fromSel = $('select[name=from]');
+      if (isBus) {
+        fromSel.removeAttribute('required');
+        fromSel.value = '';
+        fromSel.disabled = true;
+      } else {
+        fromSel.setAttribute('required', 'required');
+        fromSel.disabled = false;
+      }
+      // arrivals UI は視覚的に disabled、送信時も空で送る
+      var arrList = $('#arrivals-list');
+      arrList.querySelectorAll('select').forEach(function(s) {
+        s.disabled = isBus;
+        if (isBus) s.value = '';
+      });
+      $('#add-arrival').disabled = isBus;
+      var fromRow = fromSel.parentElement;
+      fromRow.style.opacity = isBus ? '0.5' : '1';
+      $('.arrivals').style.opacity = isBus ? '0.5' : '1';
+    }
+
     document.querySelectorAll('.mode-toggle button').forEach(function(b) {
       b.addEventListener('click', function() {
         document.querySelectorAll('.mode-toggle button').forEach(function(x) { x.classList.remove('active'); });
         b.classList.add('active');
         state.mode = b.getAttribute('data-mode');
         $('input[name=mode]').value = state.mode;
+        applyModeUI_();
       });
     });
 
@@ -194,15 +222,20 @@
       hide($('#state-error'));
       hide($('#state-success'));
       var f = ev.target;
+      var isBus = state.mode === 'バス';
       var arrivals = getArrivals();
-      if (arrivals.length === 0) { setError('到着地を 1 つ以上選択してください'); return; }
+      if (!isBus && arrivals.length === 0) {
+        setError('到着地を 1 つ以上選択してください');
+        return;
+      }
       // 運転者 / 報告時刻はクライアント側で組まない — server が allowlist と new Date() で確定する。
+      // バスは from / arrivals を空で送る (既存本線と揃える)。
       var payload = {
         userId: state.userId,
         vehicle: f.vehicle.value,
         mode: state.mode,
-        from: f.from.value,
-        arrivals: arrivals,
+        from: isBus ? '' : f.from.value,
+        arrivals: isBus ? [] : arrivals,
         odoStart: Number(f.odoStart.value),
         odoEnd: Number(f.odoEnd.value),
         note: f.note.value,
