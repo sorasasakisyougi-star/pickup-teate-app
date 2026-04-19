@@ -22,6 +22,7 @@ export function openInboxDb(dbPath?: string): Database.Database {
   db.exec(`
     CREATE TABLE IF NOT EXISTS lw_inbox (
       message_hash   TEXT PRIMARY KEY,
+      message_id     TEXT,
       bot_id         TEXT NOT NULL,
       event_type     TEXT,
       raw_body       TEXT NOT NULL,
@@ -31,14 +32,24 @@ export function openInboxDb(dbPath?: string): Database.Database {
       created_at     TEXT NOT NULL,
       updated_at     TEXT NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_lw_inbox_status ON lw_inbox(status);
+    CREATE INDEX IF NOT EXISTS idx_lw_inbox_status  ON lw_inbox(status);
     CREATE INDEX IF NOT EXISTS idx_lw_inbox_created ON lw_inbox(created_at);
   `);
+  // Best-effort migration for pre-existing DBs (older Phase 2b schema without message_id).
+  // Must run BEFORE creating idx_lw_inbox_message_id because the column may not exist yet.
+  const cols = db
+    .prepare("PRAGMA table_info('lw_inbox')")
+    .all() as ReadonlyArray<{ name: string }>;
+  if (!cols.some((c) => c.name === 'message_id')) {
+    db.exec('ALTER TABLE lw_inbox ADD COLUMN message_id TEXT');
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_lw_inbox_message_id ON lw_inbox(message_id)');
   return db;
 }
 
 export type InboxInsertArgs = {
   messageHash: string;
+  messageId: string | null;
   botId: string;
   eventType: string | null;
   rawBody: string;
@@ -58,11 +69,12 @@ export function insertInbox(
     const now = new Date().toISOString();
     const stmt = db.prepare(
       'INSERT OR IGNORE INTO lw_inbox ' +
-      '(message_hash, bot_id, event_type, raw_body, status, created_at, updated_at) ' +
-      'VALUES (?, ?, ?, ?, ?, ?, ?)',
+      '(message_hash, message_id, bot_id, event_type, raw_body, status, created_at, updated_at) ' +
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     );
     const info = stmt.run(
       args.messageHash,
+      args.messageId,
       args.botId,
       args.eventType,
       args.rawBody,
@@ -78,6 +90,7 @@ export function insertInbox(
 
 export type InboxRow = {
   message_hash: string;
+  message_id: string | null;
   bot_id: string;
   event_type: string | null;
   raw_body: string;
