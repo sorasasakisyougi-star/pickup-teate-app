@@ -1,5 +1,5 @@
 /**
- * Phase 1 — GAS サーバーサイド。
+ * Phase 1 — GAS サーバーサイド (Phase 1 skeleton 最小修理後)。
  *
  * 責務:
  *   - doGet: index.html を返す (LIFF_ID を埋め込む)
@@ -11,6 +11,9 @@
  *   - Phase 0 引継: test sheet 先行 / google.script.run のみ / 会社管理アカウント所有
  *   - doPost は実装しない
  *   - Secrets (Channel secret 等) には触らない
+ *   - 運転者名は allowlist 側 driver_name が正本 (クライアント値は使わない)
+ *   - reportedAt も server-side で確定 (クライアント値は使わない)
+ *   - vehicle / from / arrivals は server-side でマスタ存在チェック
  */
 
 // --- Script Properties accessors ------------------------------------------
@@ -55,6 +58,8 @@ function doGet() {
 
 /**
  * フォーム初期化用にマスタを返す。呼出前に userId を allowlist で判定する。
+ * 運転者名は allowlist 側の driver_name が正本なので UI へは driverName/displayName
+ * だけを返す (運転者リストは UI の select 対象にしない)。
  */
 function loadMasters(userId) {
   var allow = checkAllowed_(userId);
@@ -62,26 +67,19 @@ function loadMasters(userId) {
     throw new Error(allow.reason);
   }
   return {
-    drivers:   readMaster_('運転者マスタ', ['driver_name', 'active', 'default_vehicle'])
-                 .filter(function(r) { return r.active === true || r.active === 'TRUE'; })
-                 .map(function(r) { return r.driver_name; }),
-    vehicles:  readMaster_('車両マスタ',  ['vehicle_name', 'active'])
-                 .filter(function(r) { return r.active === true || r.active === 'TRUE'; })
-                 .map(function(r) { return r.vehicle_name; }),
-    locations: readMaster_('地点マスタ',  ['location_name', 'category'])
-                 .map(function(r) { return r.location_name; }),
+    vehicles:  loadVehicleNames_(),
+    locations: loadLocationNames_(),
     displayName: allow.displayName,
+    driverName:  allow.driverName,
   };
 }
 
 // --- saveReport (google.script.run から呼ばれる) -------------------------
 
 /**
- * ペイロード例:
+ * 受け付けるペイロード (クライアント):
  *   {
  *     userId: 'Uxxx...',
- *     reportedAt: '2026-04-19T10:15:00+09:00',
- *     driver: '山田太郎',
  *     vehicle: 'ハイエース',
  *     mode: '通常ルート',    // '通常ルート' | 'バス'
  *     from: '会社',
@@ -90,52 +88,88 @@ function loadMasters(userId) {
  *     odoEnd: 215185,
  *     note: '雨'
  *   }
+ *
+ * 受け付けないフィールド (server 側で上書きまたは無視):
+ *   - driver      (allowlist の driver_name を正本にする)
+ *   - reportedAt  (new Date() を正本にする)
  */
 function saveReport(payload) {
-  var startedAt = new Date();
+  var reportedAtServer = new Date();
   var userId = payload && payload.userId ? String(payload.userId) : '';
   try {
     var allow = checkAllowed_(userId);
     if (!allow.ok) {
-      logPost_(startedAt, userId, 'saveReport', 'unauthorized', allow.reason);
+      logPost_(reportedAtServer, userId, 'saveReport', 'unauthorized', allow.reason);
       throw new Error('unauthorized:' + allow.reason);
     }
 
     var v = validatePayload_(payload);
     if (!v.ok) {
-      logPost_(startedAt, userId, 'saveReport', 'invalid', v.error);
+      logPost_(reportedAtServer, userId, 'saveReport', 'invalid', v.error);
       throw new Error('invalid:' + v.error);
+    }
+
+    // allowlist driver_name が 運転者マスタに存在するか
+    var activeDrivers = loadActiveDriverNames_();
+    if (activeDrivers.indexOf(allow.driverName) === -1) {
+      logPost_(reportedAtServer, userId, 'saveReport', 'error', 'driver_not_in_master:' + allow.driverName);
+      throw new Error('driver_not_in_master');
+    }
+
+    // vehicle は 車両マスタに存在するか
+    var vehicles = loadVehicleNames_();
+    if (vehicles.indexOf(payload.vehicle) === -1) {
+      logPost_(reportedAtServer, userId, 'saveReport', 'error', 'vehicle_not_registered:' + payload.vehicle);
+      throw new Error('vehicle_not_registered');
+    }
+
+    // from + arrivals の全要素は 地点マスタに存在するか
+    var locations = loadLocationNames_();
+    if (locations.indexOf(payload.from) === -1) {
+      logPost_(reportedAtServer, userId, 'saveReport', 'error', 'location_not_registered:' + payload.from);
+      throw new Error('location_not_registered');
+    }
+    for (var i = 0; i < payload.arrivals.length; i++) {
+      var a = payload.arrivals[i];
+      if (!a) continue;
+      if (locations.indexOf(a) === -1) {
+        logPost_(reportedAtServer, userId, 'saveReport', 'error', 'location_not_registered:' + a);
+        throw new Error('location_not_registered');
+      }
     }
 
     var fareYen = resolveFare_(payload);
     if (fareYen == null) {
-      logPost_(startedAt, userId, 'saveReport', 'error', 'fare_not_registered');
+      logPost_(reportedAtServer, userId, 'saveReport', 'error', 'fare_not_registered');
       throw new Error('fare_not_registered');
     }
 
     var totalKm = resolveTotalKm_(payload);
     if (totalKm == null) {
-      logPost_(startedAt, userId, 'saveReport', 'error', 'distance_not_registered');
+      logPost_(reportedAtServer, userId, 'saveReport', 'error', 'distance_not_registered');
       throw new Error('distance_not_registered');
     }
 
     var sh = getTargetReportSheet_();
-    var row = buildRow_(payload, fareYen, totalKm, allow.displayName);
+    var row = buildRow_(payload, fareYen, totalKm, allow.displayName, allow.driverName, reportedAtServer);
     sh.appendRow(row);
 
-    logPost_(startedAt, userId, 'saveReport', 'ok', '');
+    logPost_(reportedAtServer, userId, 'saveReport', 'ok', '');
     return {
       ok: true,
-      savedAt: Utilities.formatDate(startedAt, 'Asia/Tokyo', "yyyy-MM-dd'T'HH:mm:ssXXX"),
+      savedAt: Utilities.formatDate(reportedAtServer, 'Asia/Tokyo', "yyyy-MM-dd'T'HH:mm:ssXXX"),
     };
   } catch (e) {
     var msg = String(e.message || '');
-    // 既知の invalid/unauthorized/fare/distance は上で log 済。ここは想定外例外。
+    // 既知の invalid/unauthorized/fare/distance/vehicle/location/driver は上で log 済。
     if (msg.indexOf('unauthorized:') !== 0 &&
         msg.indexOf('invalid:') !== 0 &&
         msg !== 'fare_not_registered' &&
-        msg !== 'distance_not_registered') {
-      logPost_(startedAt, userId, 'saveReport', 'error', msg || String(e));
+        msg !== 'distance_not_registered' &&
+        msg !== 'vehicle_not_registered' &&
+        msg !== 'location_not_registered' &&
+        msg !== 'driver_not_in_master') {
+      logPost_(reportedAtServer, userId, 'saveReport', 'error', msg || String(e));
     }
     throw e;
   }
@@ -145,7 +179,7 @@ function saveReport(payload) {
 
 function checkAllowed_(userId) {
   if (!userId) return { ok: false, reason: 'missing_user_id' };
-  var rows = readMaster_('許可マスタ', ['line_user_id', 'display_name', 'role', 'active']);
+  var rows = readMaster_('許可マスタ', ['line_user_id', 'display_name', 'role', 'active', 'driver_name']);
   for (var i = 0; i < rows.length; i++) {
     if (rows[i].line_user_id !== userId) continue;
     var active = rows[i].active === true || rows[i].active === 'TRUE';
@@ -154,16 +188,36 @@ function checkAllowed_(userId) {
     if (role !== '送迎報告' && role !== '両方') {
       return { ok: false, reason: 'role_not_permitted' };
     }
-    return { ok: true, displayName: rows[i].display_name };
+    var driverName = String(rows[i].driver_name || '').trim();
+    if (!driverName) return { ok: false, reason: 'missing_driver_name' };
+    return { ok: true, displayName: rows[i].display_name, driverName: driverName };
   }
   return { ok: false, reason: 'user_not_registered' };
 }
 
-// --- Validation -----------------------------------------------------------
+// --- Master loaders (server-side 正本) -----------------------------------
+
+function loadVehicleNames_() {
+  return readMaster_('車両マスタ', ['vehicle_name', 'active'])
+    .filter(function(r) { return r.active === true || r.active === 'TRUE'; })
+    .map(function(r) { return r.vehicle_name; });
+}
+
+function loadLocationNames_() {
+  return readMaster_('地点マスタ', ['location_name', 'category'])
+    .map(function(r) { return r.location_name; });
+}
+
+function loadActiveDriverNames_() {
+  return readMaster_('運転者マスタ', ['driver_name', 'active', 'default_vehicle'])
+    .filter(function(r) { return r.active === true || r.active === 'TRUE'; })
+    .map(function(r) { return r.driver_name; });
+}
+
+// --- Validation (形式のみ、存在チェックは saveReport 内) -----------------
 
 function validatePayload_(p) {
   if (!p) return { ok: false, error: 'empty_payload' };
-  if (!p.driver)  return { ok: false, error: 'missing_driver' };
   if (!p.vehicle) return { ok: false, error: 'missing_vehicle' };
   if (p.mode !== '通常ルート' && p.mode !== 'バス') {
     return { ok: false, error: 'invalid_mode' };
@@ -220,18 +274,17 @@ function resolveTotalKm_(payload) {
 
 // --- Row assembly (sheet-schema.md の列順と一致) -------------------------
 
-function buildRow_(p, fareYen, totalKm, displayName) {
+function buildRow_(p, fareYen, totalKm, displayName, driverName, reportedAtServer) {
   var arrivals = (p.arrivals || []).filter(function(a) { return a && String(a).trim(); });
   var padded = arrivals.slice(0, 8);
   while (padded.length < 8) padded.push('');
-  var reportedDate = p.reportedAt ? new Date(p.reportedAt) : new Date();
-  var dateDisplay = Utilities.formatDate(reportedDate, 'Asia/Tokyo', 'yyyy/M/d');
-  var reportedIso = Utilities.formatDate(reportedDate, 'Asia/Tokyo', "yyyy-MM-dd'T'HH:mm:ssXXX");
+  var dateDisplay = Utilities.formatDate(reportedAtServer, 'Asia/Tokyo', 'yyyy/M/d');
+  var reportedIso = Utilities.formatDate(reportedAtServer, 'Asia/Tokyo', "yyyy-MM-dd'T'HH:mm:ssXXX");
 
   return [
-    reportedIso,        // A: 報告時刻
-    dateDisplay,        // B: 日付
-    p.driver,           // C: 運転者
+    reportedIso,        // A: 報告時刻 (server-side 確定)
+    dateDisplay,        // B: 日付 (server-side 確定)
+    driverName,         // C: 運転者 (allowlist.driver_name 正本)
     p.vehicle,          // D: 車両
     p.mode,             // E: 区分
     p.from,             // F: 出発地

@@ -39,16 +39,17 @@
 5. ⚙️ Project Settings → "appsscript.json マニフェストファイルをエディタで表示" を ON
 6. 左ペインに `appsscript.json` が出るので本 repo の内容で上書き
 
-### Step 3: Script Properties を設定
+### Step 3: Script Properties (LIFF_ID 以外) を先に設定
 
 GAS エディタ左 ⚙️ Project Settings → Script properties → Add:
 
 | key | value |
 |---|---|
-| `LIFF_ID` | LINE Developers Console の新テスト LIFF app の ID |
 | `SHEET_ID` | Step 1 でメモした Spreadsheet ID |
 | `TEST_MODE` | `1` (test sheet に書き込み) |
 | `TIMEZONE` | `Asia/Tokyo` |
+
+**注意**: `LIFF_ID` はここでは入れない。Step 5 で LIFF app を作成してから Step 6 で入れる。
 
 **禁止**: Channel secret / OAuth token を Properties に入れない。
 
@@ -62,31 +63,42 @@ GAS エディタ左 ⚙️ Project Settings → Script properties → Add:
 6. デプロイ → 初回のみ権限承認画面 → 承認
 7. ウェブアプリ URL をコピー (`https://script.google.com/macros/s/XXXX/exec`)
 
-### Step 5: LIFF app 作成 (テスト用、リッチメニューにはまだ載せない)
+### Step 5: 新テスト LIFF app を作成し LIFF_ID を取得
 
 1. LINE Developers Console → **送迎報告 LINE Login channel**
 2. LIFF タブ → 新規追加
 3. 名前: `送迎報告 phase1 test`
-4. エンドポイント URL: Step 4 でコピーした GAS webapp URL
+4. エンドポイント URL: **Step 4 でコピーした GAS webapp URL**
 5. サイズ: `Full`
 6. scope: `profile`, `openid` (必要に応じて)
 7. Bot link: 今は無し (Phase 5 で設定)
 8. `liff.getProfile()` 使用: ON
-9. 作成 → LIFF ID を控え、GAS の `LIFF_ID` プロパティに設定
+9. 作成 → LIFF ID をメモ (次 Step で GAS に入れる)
 
-### Step 6: 実機テスト (自分のスマホで)
+### Step 6: GAS の Script Properties に LIFF_ID を設定
+
+GAS エディタ左 ⚙️ Project Settings → Script properties → Add:
+
+| key | value |
+|---|---|
+| `LIFF_ID` | Step 5 でメモした LIFF ID |
+
+(他の 3 キー `SHEET_ID` / `TEST_MODE` / `TIMEZONE` は Step 3 で設定済み。)
+
+### Step 7: 許可マスタに自分を追加して実機テスト
 
 1. `許可マスタ` に自分の LINE User ID を 1 行追加:
    - line_user_id: LIFF SDK の `liff.getProfile().userId` で取得できる値
-   - display_name: 任意
+   - display_name: UI 表示用の自由な名前 (例: `山田 (太郎)`)
    - role: `送迎報告`
    - active: `TRUE`
+   - driver_name: **`運転者マスタ` に登録してある名前と exact 一致させる** (例: `山田太郎`)
 2. 公式 LINE アプリで `line://app/<LIFF_ID>` リンクを開く (自分だけ)
-3. フォームが表示されれば OK
-4. 1 件送信 → `送迎記録_test` タブに行追加されれば合格
+3. フォームが表示されれば OK (運転者欄は read-only、`driver_name` が表示される)
+4. 1 件送信 → `送迎記録_test` タブに行追加されれば合格 (運転者列 = allowlist の driver_name)
 5. `投稿ログ` タブにも記録されていること
 
-### Step 7: Phase 1 完了条件チェック
+### Step 8: Phase 1 完了条件チェック
 
 - [ ] フォームが表示される
 - [ ] 1 件保存できる

@@ -11,15 +11,17 @@
 
 LINE User ID で「送信権限あり」を判定する正本。Phase 0 時点は空、Phase 2 で自分 1 行を追加。
 
-| A: line_user_id | B: display_name | C: role | D: active |
-|---|---|---|---|
-| `Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` | 山田太郎 | `送迎報告` | TRUE |
-| `Uyyy...` | 鈴木花子 | `両方` | TRUE |
-| `Uzzz...` | 退職者 | `送迎報告` | FALSE |
+| A: line_user_id | B: display_name | C: role | D: active | E: driver_name |
+|---|---|---|---|---|
+| `Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` | 山田 (太郎) | `送迎報告` | TRUE | 山田太郎 |
+| `Uyyy...` | 鈴木 (花子) | `両方` | TRUE | 鈴木花子 |
+| `Uzzz...` | 退職者 | `送迎報告` | FALSE | 退職者 |
 
 - `role`: `送迎報告` / `有給申請` / `両方` のどれか
 - `active=FALSE` は `unauthorized` として扱う
 - `line_user_id` の前方に空白禁止、exact match
+- `display_name` は UI 表示専用 (クライアントに出るが保存正本ではない)
+- `driver_name` は **保存正本** — `送迎記録_test` の運転者列に入る値。`運転者マスタ` に同じ値の行が無ければ保存失敗 (`driver_not_in_master`)
 
 ---
 

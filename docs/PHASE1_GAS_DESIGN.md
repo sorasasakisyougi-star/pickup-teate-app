@@ -90,12 +90,15 @@
 
 ## 6. Script Properties (GAS 側で設定)
 
-| Key | 値 | 用途 |
-|---|---|---|
-| `LIFF_ID` | 新テスト LIFF の ID (LINE Developers Console から取得) | `index.html` から `doGet` 経由で読み出し、`liff.init()` に渡す |
-| `SHEET_ID` | 会社管理アカウント所有の Google Sheet の ID | `SpreadsheetApp.openById(...)` |
-| `TEST_MODE` | `"1"` (Phase 1-3) / 空 (Phase 4+) | `送迎記録_test` vs `送迎記録` 切替 |
-| `TIMEZONE` | `Asia/Tokyo` (manifest と重複だが明示) | 日付書式統一 |
+**設定順**: LIFF app 作成前 (Step 3) に下 3 つ、LIFF app 作成後 (Step 6) に `LIFF_ID` を追加。
+LIFF endpoint URL は Step 4 で deploy した webapp URL を指すため、`LIFF_ID` は LIFF app 作成後にしか確定しない。
+
+| Key | 設定タイミング | 値 | 用途 |
+|---|---|---|---|
+| `SHEET_ID` | Step 3 | 会社管理アカウント所有の Google Sheet の ID | `SpreadsheetApp.openById(...)` |
+| `TEST_MODE` | Step 3 | `"1"` (Phase 1-3) / 空 (Phase 4+) | `送迎記録_test` vs `送迎記録` 切替 |
+| `TIMEZONE` | Step 3 | `Asia/Tokyo` (manifest と重複だが明示) | 日付書式統一 |
+| `LIFF_ID` | **Step 6 (LIFF app 作成後)** | 新テスト LIFF の ID (LINE Developers Console から取得) | `index.html` から `doGet` 経由で読み出し、`liff.init()` に渡す |
 
 **禁止**: LIFF Channel ID、Channel secret、OAuth token 等を Script Properties に入れない (Phase 0 原則 #2)。
 

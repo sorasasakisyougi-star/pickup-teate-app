@@ -14,6 +14,8 @@
     input, select, textarea { padding: 10px 12px; font-size: 16px;
                               border: 1px solid #ccc; border-radius: 8px; background: white; }
     input:focus, select:focus, textarea:focus { outline: 2px solid #3158d8; border-color: transparent; }
+    .readonly { padding: 10px 12px; font-size: 16px; border: 1px solid #ddd;
+                border-radius: 8px; background: #f0f0f2; color: #333; }
     .mode-toggle { display: flex; gap: 8px; }
     .mode-toggle button { flex: 1; padding: 12px; font-size: 15px; font-weight: 700;
                           border: 1px solid #ccc; border-radius: 8px; background: white; cursor: pointer; }
@@ -48,7 +50,7 @@
   <form id="form" hidden>
     <div class="row">
       <label>運転者</label>
-      <select name="driver" required><option value="">選択</option></select>
+      <div id="driver-readonly" class="readonly" aria-readonly="true"></div>
     </div>
 
     <div class="row">
@@ -100,9 +102,10 @@
     var LIFF_ID = <?= JSON.stringify(liffId) ?>;
     var TEST_MODE = <?= testMode ? 'true' : 'false' ?>;
 
+    // UI state only. 運転者名 (保存正本) はクライアントに持たせない —
+    // server-side の allowlist.driver_name が唯一の真実。
     var state = {
       userId: null,
-      displayName: null,
       locations: [],
       mode: '通常ルート',
     };
@@ -155,12 +158,9 @@
     }
 
     function renderFormFromMasters(m) {
-      var driverSel = $('select[name=driver]');
-      driverSel.innerHTML = '<option value="">選択</option>';
-      m.drivers.forEach(function(d) {
-        var o = document.createElement('option'); o.value = d; o.textContent = d;
-        driverSel.appendChild(o);
-      });
+      // 運転者は read-only 表示 (allowlist.driver_name を server から受け取ったもの)
+      var driverLabel = m.driverName || m.displayName || '(未設定)';
+      $('#driver-readonly').textContent = driverLabel;
 
       var vehSel = $('select[name=vehicle]');
       vehSel.innerHTML = '<option value="">選択</option>';
@@ -173,7 +173,8 @@
       renderLocationOptions($('select[name=from]'), m.locations);
       addArrival();
 
-      $('#user-meta').textContent = '投稿者: ' + m.displayName + (TEST_MODE ? '  [test sheet]' : '');
+      var metaName = m.displayName || m.driverName || '';
+      $('#user-meta').textContent = '投稿者: ' + metaName + (TEST_MODE ? '  [test sheet]' : '');
       show($('#form'));
     }
 
@@ -195,10 +196,9 @@
       var f = ev.target;
       var arrivals = getArrivals();
       if (arrivals.length === 0) { setError('到着地を 1 つ以上選択してください'); return; }
+      // 運転者 / 報告時刻はクライアント側で組まない — server が allowlist と new Date() で確定する。
       var payload = {
         userId: state.userId,
-        reportedAt: new Date().toISOString(),
-        driver: f.driver.value,
         vehicle: f.vehicle.value,
         mode: state.mode,
         from: f.from.value,
@@ -221,9 +221,13 @@
           var human = msg;
           if (msg.indexOf('unauthorized:user_not_registered') === 0) human = '運転者登録が必要です';
           else if (msg.indexOf('unauthorized:inactive_user') === 0) human = '運転者登録が無効化されています';
+          else if (msg.indexOf('unauthorized:missing_driver_name') === 0) human = '許可マスタの driver_name が未設定です';
           else if (msg.indexOf('invalid:too_many_arrivals') === 0) human = '到着地は最大 8 件です';
           else if (msg.indexOf('invalid:missing_odo') === 0) human = 'ODO を数値で入力してください';
           else if (msg.indexOf('invalid:odo_end_before_start') === 0) human = 'ODO (到着) は ODO (出発) 以上にしてください';
+          else if (msg === 'driver_not_in_master') human = 'allowlist の driver_name が 運転者マスタに存在しません';
+          else if (msg === 'vehicle_not_registered') human = '車両が 車両マスタに未登録です';
+          else if (msg === 'location_not_registered') human = '地点が 地点マスタに未登録です';
           else if (msg === 'fare_not_registered') human = '料金マスタが未登録です。管理者に連絡してください';
           else if (msg === 'distance_not_registered') human = '区間距離マスタが未登録です。管理者に連絡してください';
           setError(human);
@@ -238,7 +242,6 @@
         if (!liff.isLoggedIn()) { liff.login(); return; }
         var profile = await liff.getProfile();
         state.userId = profile.userId;
-        state.displayName = profile.displayName;
 
         google.script.run
           .withSuccessHandler(function(m) {
@@ -249,6 +252,7 @@
             var msg = (err && err.message) ? err.message : String(err);
             if (msg === 'user_not_registered') setError('運転者登録がありません。管理者にご連絡ください');
             else if (msg === 'inactive_user') setError('運転者登録が無効になっています');
+            else if (msg === 'missing_driver_name') setError('許可マスタの driver_name が未設定です');
             else setError('マスタ読込に失敗しました: ' + msg);
           })
           .loadMasters(state.userId);
