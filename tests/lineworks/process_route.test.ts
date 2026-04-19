@@ -103,6 +103,7 @@ test('POST 200 with zeros when inbox is empty', async () => {
   const json = await res.json();
   assert.equal(json.ok, true);
   assert.equal(json.processed, 0);
+  assert.equal(json.skipped, 0);
   assert.equal(json.forwarded, 0);
   assert.equal(json.invalid, 0);
   assert.equal(json.failed, 0);

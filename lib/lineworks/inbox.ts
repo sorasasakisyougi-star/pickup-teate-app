@@ -19,6 +19,10 @@ export function openInboxDb(dbPath?: string): Database.Database {
   const db = new Database(target);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
+  // Default busy_timeout is 0ms: a second writer gets SQLITE_BUSY immediately.
+  // 5s is plenty for the short write transactions we do here and keeps the
+  // webhook + drainer from colliding under concurrent load.
+  db.pragma('busy_timeout = 5000');
   db.exec(`
     CREATE TABLE IF NOT EXISTS lw_inbox (
       message_hash   TEXT PRIMARY KEY,
@@ -159,6 +163,28 @@ export function markInboxStatus(args: MarkStatusArgs, dbPath?: string): void {
       now,
       args.messageHash,
     );
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Atomically claim a row for processing. Returns true if this call flipped
+ * the row from 'received' → 'processing' (caller owns the row), false if
+ * another worker already took it (caller should skip). This closes the
+ * TOCTOU window between listPendingInbox() and the long async pipeline.
+ */
+export function claimInboxRow(messageHash: string, dbPath?: string): boolean {
+  const db = openInboxDb(dbPath);
+  try {
+    const now = new Date().toISOString();
+    const info = db
+      .prepare(
+        "UPDATE lw_inbox SET status = 'processing', updated_at = ? " +
+        "WHERE message_hash = ? AND status = 'received'",
+      )
+      .run(now, messageHash);
+    return info.changes === 1;
   } finally {
     db.close();
   }

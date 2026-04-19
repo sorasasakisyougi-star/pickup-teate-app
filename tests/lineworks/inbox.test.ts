@@ -10,6 +10,7 @@ import {
   openInboxDb,
   listPendingInbox,
   markInboxStatus,
+  claimInboxRow,
 } from '../../lib/lineworks/inbox';
 
 
@@ -276,6 +277,38 @@ test('markInboxStatus invalid: sets status + errorMessage', () => {
   assert.equal(row.status, 'invalid');
   assert.equal(row.error_message, 'driver_not_registered');
   assert.equal(row.receipt_id, null);
+});
+
+test('claimInboxRow transitions received → processing atomically (first wins)', () => {
+  const dbPath = tempDbPath();
+  insertInbox(
+    { messageHash: 'claim-1', messageId: null, botId: 'b', eventType: 'message', rawBody: '{}' },
+    dbPath,
+  );
+  assert.equal(claimInboxRow('claim-1', dbPath), true);
+  // Second claim must fail because status is now 'processing', not 'received'.
+  assert.equal(claimInboxRow('claim-1', dbPath), false);
+  const row = getInboxByHash('claim-1', dbPath)!;
+  assert.equal(row.status, 'processing');
+});
+
+test('claimInboxRow returns false for unknown hash', () => {
+  const dbPath = tempDbPath();
+  openInboxDb(dbPath);
+  assert.equal(claimInboxRow('does-not-exist', dbPath), false);
+});
+
+test('claimInboxRow refuses to re-claim a forwarded row', () => {
+  const dbPath = tempDbPath();
+  insertInbox(
+    { messageHash: 'c2', messageId: null, botId: 'b', eventType: 'message', rawBody: '{}' },
+    dbPath,
+  );
+  markInboxStatus(
+    { messageHash: 'c2', status: 'forwarded', receiptId: 'flow-xyz' },
+    dbPath,
+  );
+  assert.equal(claimInboxRow('c2', dbPath), false);
 });
 
 test('markInboxStatus updates updated_at', async () => {

@@ -2,6 +2,8 @@
 // rows and computes the fare amount. Pure business logic behind an injected
 // EnrichDbClient so unit tests don't need a real Supabase instance.
 
+import type { SupabaseClient } from '@supabase/supabase-js';
+
 export type NamedRow = { id: number; name: string };
 export type FareRow = { from_id: number; to_id: number; amount_yen: number };
 export type RouteDistanceRow = {
@@ -54,6 +56,20 @@ export async function resolveRouteLocations(
  *    Each leg tries direct (from,to) then reverse (to,from) — mirroring
  *    app/page.tsx:getFareAmount. Any missing leg → null (caller marks invalid).
  */
+/** Build the (from, to) pair list for a route's pairwise legs. */
+function buildLegs(
+  fromId: number,
+  arrivalIds: ReadonlyArray<number>,
+): ReadonlyArray<[number, number]> {
+  const legs: [number, number][] = [];
+  let cur = fromId;
+  for (const next of arrivalIds) {
+    legs.push([cur, next]);
+    cur = next;
+  }
+  return legs;
+}
+
 export async function computeFareYen(
   db: EnrichDbClient,
   fromId: number | null,
@@ -65,15 +81,13 @@ export async function computeFareYen(
   if (arrivalIds.length === 0) return null;
   if (arrivalIds.some((id) => id == null)) return null;
 
-  let sum = 0;
-  let cur = fromId;
-  for (const next of arrivalIds as number[]) {
-    const leg = await findFareAnyDirection(db, cur, next);
-    if (leg == null) return null;
-    sum += leg;
-    cur = next;
-  }
-  return sum;
+  const legs = buildLegs(fromId, arrivalIds as ReadonlyArray<number>);
+  // Each leg is independent (cur/next are known up front), so fan out.
+  const legFares = await Promise.all(
+    legs.map(([a, b]) => findFareAnyDirection(db, a, b)),
+  );
+  if (legFares.some((yen) => yen == null)) return null;
+  return (legFares as number[]).reduce((acc, yen) => acc + yen, 0);
 }
 
 async function findFareAnyDirection(
@@ -99,15 +113,12 @@ export async function resolveSegmentDistances(
   arrivalIds: ReadonlyArray<number>,
 ): Promise<number[] | null> {
   if (arrivalIds.length === 0) return null;
-  const out: number[] = [];
-  let cur = fromId;
-  for (const next of arrivalIds) {
-    const km = await findRouteDistanceAnyDirection(db, cur, next);
-    if (km == null) return null;
-    out.push(km);
-    cur = next;
-  }
-  return out;
+  const legs = buildLegs(fromId, arrivalIds);
+  const results = await Promise.all(
+    legs.map(([a, b]) => findRouteDistanceAnyDirection(db, a, b)),
+  );
+  if (results.some((km) => km == null)) return null;
+  return results as number[];
 }
 
 async function findRouteDistanceAnyDirection(
@@ -123,61 +134,56 @@ async function findRouteDistanceAnyDirection(
 
 // --- Supabase adapter ------------------------------------------------------
 
-type SupabaseLike = {
-  from(table: string): {
-    select(cols: string): {
-      eq(col: string, val: string | number): {
-        maybeSingle<T>(): Promise<{ data: T | null; error: unknown }>;
-      };
-      match(filter: Record<string, string | number>): {
-        maybeSingle<T>(): Promise<{ data: T | null; error: unknown }>;
-      };
-    };
-  };
-};
-
 /**
  * Wrap a @supabase/supabase-js client into the EnrichDbClient interface.
  * Errors bubble up as thrown Error; callers should map them to "failed"
  * status so the inbox row can be retried.
+ *
+ * NOTE: Typed against `SupabaseClient` directly rather than a hand-rolled
+ * structural type, because maybeSingle() returns a PostgrestBuilder that
+ * extends PromiseLike — a plain `Promise<...>` fake won't structurally
+ * match it without `excessively deep` errors.
  */
-export function createSupabaseEnrichClient(supabase: SupabaseLike): EnrichDbClient {
+export function createSupabaseEnrichClient(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: SupabaseClient<any, any, any, any, any>,
+): EnrichDbClient {
   return {
     async findDriverByName(name) {
       const res = await supabase
         .from('drivers')
         .select('id,name')
         .eq('name', name)
-        .maybeSingle<NamedRow>();
+        .maybeSingle();
       if (res.error) throw new Error('drivers_query_failed');
-      return res.data ?? null;
+      return (res.data as NamedRow | null) ?? null;
     },
     async findLocationByName(name) {
       const res = await supabase
         .from('locations')
         .select('id,name')
         .eq('name', name)
-        .maybeSingle<NamedRow>();
+        .maybeSingle();
       if (res.error) throw new Error('locations_query_failed');
-      return res.data ?? null;
+      return (res.data as NamedRow | null) ?? null;
     },
     async findFare(fromId, toId) {
       const res = await supabase
         .from('fares')
         .select('from_id,to_id,amount_yen')
         .match({ from_id: fromId, to_id: toId })
-        .maybeSingle<FareRow>();
+        .maybeSingle();
       if (res.error) throw new Error('fares_query_failed');
-      return res.data ?? null;
+      return (res.data as FareRow | null) ?? null;
     },
     async findRouteDistance(fromId, toId) {
       const res = await supabase
         .from('route_distances')
         .select('from_location_id,to_location_id,distance_km')
         .match({ from_location_id: fromId, to_location_id: toId })
-        .maybeSingle<RouteDistanceRow>();
+        .maybeSingle();
       if (res.error) throw new Error('route_distances_query_failed');
-      return res.data ?? null;
+      return (res.data as RouteDistanceRow | null) ?? null;
     },
   };
 }

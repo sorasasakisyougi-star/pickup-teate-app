@@ -10,6 +10,7 @@ import {
   computeFareYen,
   resolveSegmentDistances,
   type EnrichDbClient,
+  type NamedRow,
 } from './enrich';
 import { buildV1Payload, type V1Payload } from './mapper';
 import type { ForwardResult } from './forward';
@@ -165,11 +166,14 @@ export async function processInboxRow(
   if (!parsed.data.isBus && !locations.from) {
     return invalid('location_not_registered');
   }
-  if (locations.arrivals.some((a) => a === null)) {
+  const resolvedArrivals: NamedRow[] = locations.arrivals.filter(
+    (a): a is NamedRow => a !== null,
+  );
+  if (resolvedArrivals.length !== locations.arrivals.length) {
     return invalid('location_not_registered');
   }
   const fromId = locations.from?.id ?? null;
-  const arrivalIds = locations.arrivals.map((a) => a!.id);
+  const arrivalIds = resolvedArrivals.map((a) => a.id);
 
   let fareYen: number | null;
   try {
@@ -188,11 +192,7 @@ export async function processInboxRow(
   let segmentDistances: number[] | undefined;
   if (!parsed.data.isBus && fromId != null) {
     try {
-      const segs = await resolveSegmentDistances(
-        deps.db,
-        fromId,
-        arrivalIds as number[],
-      );
+      const segs = await resolveSegmentDistances(deps.db, fromId, arrivalIds);
       if (segs == null) return invalid('distance_not_registered');
       segmentDistances = segs;
     } catch (e) {
@@ -213,10 +213,13 @@ export async function processInboxRow(
 
   const result = await deps.forward(payload);
   if (result.ok) {
+    // Power Automate returns an HTTP status; the flow-run-id (if any) lives in
+    // the response body which we do not read. Record null rather than a
+    // misleading "200" string that isn't a real receipt.
     return {
       terminal: 'forwarded',
       payload,
-      receiptId: String(result.status),
+      receiptId: null,
       attempts: result.attempts,
     };
   }

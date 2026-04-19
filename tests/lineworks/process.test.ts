@@ -95,7 +95,8 @@ B老人ホーム
   );
   assert.equal(r.terminal, 'forwarded');
   if (r.terminal !== 'forwarded') return;
-  assert.equal(r.receiptId, '200');
+  // Phase 2c-rev-fix: receiptId is null (HTTP 200 wasn't a meaningful receipt).
+  assert.equal(r.receiptId, null);
   assert.equal(f.calls.length, 1);
   assert.equal(f.calls[0].運転者, '山田太郎');
   assert.equal(f.calls[0]['金額（円）'], 1200);

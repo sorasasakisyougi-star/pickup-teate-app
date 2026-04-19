@@ -3,12 +3,15 @@
 // parse→enrich→map→forward pipeline, and marks each row with its terminal
 // status (forwarded / invalid / failed). No auto-polling yet.
 
+import crypto from 'node:crypto';
+
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
 import {
   listPendingInbox,
   markInboxStatus,
+  claimInboxRow,
   type InboxRow,
 } from '@/lib/lineworks/inbox';
 import {
@@ -40,6 +43,18 @@ function extractAdminKey(req: NextRequest): string {
   if (header) return header;
   const auth = req.headers.get('authorization') || '';
   return auth.startsWith('Bearer ') ? auth.slice('Bearer '.length) : '';
+}
+
+/**
+ * Length-agnostic timing-safe comparison. Returns false fast on length
+ * mismatch (leaking only the length of `expected`, which is a constant)
+ * and otherwise runs constant-time on equal-length buffers.
+ */
+function constantTimeEqual(actual: string, expected: string): boolean {
+  const a = Buffer.from(actual, 'utf8');
+  const b = Buffer.from(expected, 'utf8');
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
 }
 
 function getSupabaseUrl(): string {
@@ -120,7 +135,7 @@ export async function POST(req: NextRequest) {
       { status: 503 },
     );
   }
-  if (extractAdminKey(req) !== expected) {
+  if (!constantTimeEqual(extractAdminKey(req), expected)) {
     return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
   }
 
@@ -143,11 +158,20 @@ export async function POST(req: NextRequest) {
 
   const rows = listPendingInbox(limit);
   const details: RowResult[] = [];
+  let processed = 0;
+  let skipped = 0;
   let forwarded = 0;
   let invalid = 0;
   let failed = 0;
 
   for (const row of rows) {
+    // Atomically transition 'received' → 'processing'. If another worker got
+    // the row first, claim fails and we skip — no double-processing.
+    if (!claimInboxRow(row.message_hash)) {
+      skipped++;
+      continue;
+    }
+    processed++;
     try {
       const outcome = await processInboxRow(row.raw_body, row.created_at, {
         db,
@@ -178,7 +202,8 @@ export async function POST(req: NextRequest) {
   return NextResponse.json(
     {
       ok: true,
-      processed: rows.length,
+      processed,
+      skipped,
       forwarded,
       invalid,
       failed,
