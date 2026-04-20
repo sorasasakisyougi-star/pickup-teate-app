@@ -1,0 +1,9 @@
+# Wrangler local cache (dev server state, build output, per-branch state)
+.wrangler/
+
+# Local secrets file (never commit). Not used yet but reserved for future.
+.dev.vars
+.dev.vars.*
+
+# Node artefacts if wrangler ever needs a package.json later
+node_modules/

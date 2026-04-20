@@ -1,0 +1,9 @@
+name = "pickup-liff-redirect"
+main = "worker.js"
+compatibility_date = "2026-04-20"
+
+routes = [
+  { pattern = "pickup.vege-office.com/*", zone_name = "vege-office.com" }
+]
+
+workers_dev = true
