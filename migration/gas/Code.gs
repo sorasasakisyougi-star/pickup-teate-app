@@ -147,11 +147,9 @@ function saveReport(payload) {
       throw new Error('fare_not_registered');
     }
 
+    // 総走行距離は resolveTotalKm_ が ODO delta で常に数値を返す (旧本線と揃える)。
+    // 距離マスタ未登録で保存失敗させない (修理6 案2)。
     var totalKm = resolveTotalKm_(payload);
-    if (totalKm == null) {
-      logPost_(reportedAtServer, userId, 'saveReport', 'error', 'distance_not_registered');
-      throw new Error('distance_not_registered');
-    }
 
     var sh = getTargetReportSheet_();
     var row = buildRow_(payload, fareYen, totalKm, allow.displayName, allow.driverName, reportedAtServer);
@@ -168,7 +166,6 @@ function saveReport(payload) {
     if (msg.indexOf('unauthorized:') !== 0 &&
         msg.indexOf('invalid:') !== 0 &&
         msg !== 'fare_not_registered' &&
-        msg !== 'distance_not_registered' &&
         msg !== 'vehicle_not_registered' &&
         msg !== 'location_not_registered' &&
         msg !== 'driver_not_in_master') {
@@ -261,22 +258,16 @@ function resolveFare_(payload) {
   return sum;
 }
 
+/**
+ * 総走行距離 = ODO終 - ODO始 (driver 実測)。
+ * 旧送迎システム (pickup-teate-app @ a55bf56) の距離ロジックに揃える:
+ *   - 距離マスタは save 必須ではない (optional reference table)
+ *   - route_distances 未登録でも保存は成功する
+ *   - 想定距離 / 超過距離 / 距離警告 / 区間警告詳細 は保存失敗条件にしない
+ * validatePayload_ が既に odoStart/odoEnd を数値検査 + e >= s を確認済。
+ */
 function resolveTotalKm_(payload) {
-  if (payload.mode === 'バス') return 0;
-  var rows = readMaster_('距離マスタ', ['from', 'to', 'distance_km']);
-  var chain = [payload.from].concat(
-    (payload.arrivals || []).filter(function(a) { return a && String(a).trim(); })
-  );
-  var sum = 0;
-  for (var i = 0; i < chain.length - 1; i++) {
-    var from = chain[i], to = chain[i + 1];
-    var row = rows.filter(function(r) { return r.from === from && r.to === to; })[0];
-    if (!row) return null;
-    var km = Number(row.distance_km);
-    if (!isFinite(km)) return null;
-    sum += km;
-  }
-  return Math.round(sum * 10) / 10;
+  return Math.round((Number(payload.odoEnd) - Number(payload.odoStart)) * 10) / 10;
 }
 
 // --- Row assembly (sheet-schema.md の列順と一致) -------------------------

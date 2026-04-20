@@ -262,7 +262,7 @@
           else if (msg === 'vehicle_not_registered') human = '車両が 車両マスタに未登録です';
           else if (msg === 'location_not_registered') human = '地点が 地点マスタに未登録です';
           else if (msg === 'fare_not_registered') human = '料金マスタが未登録です。管理者に連絡してください';
-          else if (msg === 'distance_not_registered') human = '区間距離マスタが未登録です。管理者に連絡してください';
+          // 距離マスタは optional (旧送迎本線と同じ思想)。distance_not_registered は Code.gs で投げなくなった。
           setError(human);
           $('#submit').disabled = false;
         })
