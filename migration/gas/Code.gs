@@ -152,7 +152,7 @@ function saveReport(payload) {
     var totalKm = resolveTotalKm_(payload);
 
     var sh = getTargetReportSheet_();
-    var row = buildRow_(payload, fareYen, totalKm, allow.displayName, allow.driverName, reportedAtServer);
+    var row = buildRow_(payload, fareYen, totalKm, allow.driverName, reportedAtServer);
     sh.appendRow(row);
 
     logPost_(reportedAtServer, userId, 'saveReport', 'ok', '');
@@ -270,11 +270,30 @@ function resolveTotalKm_(payload) {
   return Math.round((Number(payload.odoEnd) - Number(payload.odoStart)) * 10) / 10;
 }
 
-// --- Row assembly (sheet-schema.md の列順と一致) -------------------------
+// --- Row assembly (実シート 送迎記録_test 35 列レイアウトと一致) ---------
 
-function buildRow_(p, fareYen, totalKm, displayName, driverName, reportedAtServer) {
+/**
+ * 送迎記録_test (実シート) の正本 35 列レイアウトと一致させる。
+ * 旧送迎システムの OneDrive Excel (送迎N月自動反映.xlsx) と同じ列配置:
+ *
+ *   A=日付 B=運転者 C=車両 D=出発地 E..L=到着1..8
+ *   M=バス (モード文字列 '通常ルート' | 'バス')
+ *   N=金額（円） O=距離（始） P=距離（終）
+ *   Q..X=距離（始〜到着1, 到着1〜到着2, …, 到着7〜到着8）
+ *   Y=総走行距離（km） Z=備考
+ *   AA=出発写真URL AB..AI=到着写真URL到着1..8
+ *
+ * Phase 1 で未扱い:
+ *   - 区間距離 (Q..X): 旧本線もドライバ報告の ODO 差分のみで保存するケース多数 (Q..X は空欄可)
+ *   - 写真URL (AA..AI): Phase 1 は LIFF 直接入力のみ、写真アップロード未実装
+ * 以上は空文字で埋める。Y (総走行距離) は ODO 差分で常に数値。
+ *
+ * userId / displayName は **実シートに列が無い**。監査は 投稿ログ タブで完結
+ * (allowlist 経由で display_name を逆引きできるので二重記録はしない)。
+ */
+function buildRow_(p, fareYen, totalKm, driverName, reportedAtServer) {
   // バスモードでは既存本線 (pages/api/powerautomate.ts:1023-1024) と揃えて
-  // 出発地 (F) と 到着1..8 (G..N) を空欄で書き込む。通常ルートのみ値を入れる。
+  // 出発地 (D) と 到着1..8 (E..L) を空欄で書き込む。通常ルートのみ値を入れる。
   var isBus = (p.mode === 'バス');
   var effectiveFrom = isBus ? '' : (p.from || '');
   var effectiveArrivals = isBus
@@ -283,31 +302,42 @@ function buildRow_(p, fareYen, totalKm, displayName, driverName, reportedAtServe
   var padded = effectiveArrivals.slice(0, 8);
   while (padded.length < 8) padded.push('');
 
-  var dateDisplay = Utilities.formatDate(reportedAtServer, 'Asia/Tokyo', 'yyyy/M/d');
-  var reportedIso = Utilities.formatDate(reportedAtServer, 'Asia/Tokyo', "yyyy-MM-dd'T'HH:mm:ssXXX");
-
   return [
-    reportedIso,        // A: 報告時刻 (server-side 確定)
-    dateDisplay,        // B: 日付 (server-side 確定)
-    driverName,         // C: 運転者 (allowlist.driver_name 正本)
-    p.vehicle,          // D: 車両
-    p.mode,             // E: 区分
-    effectiveFrom,      // F: 出発地 (バス時は '')
-    padded[0],          // G: 到着1 (バス時は '')
-    padded[1],          // H: 到着2
-    padded[2],          // I: 到着3
-    padded[3],          // J: 到着4
-    padded[4],          // K: 到着5
-    padded[5],          // L: 到着6
-    padded[6],          // M: 到着7
-    padded[7],          // N: 到着8
-    Number(p.odoStart), // O: ODO始
-    Number(p.odoEnd),   // P: ODO終
-    fareYen,            // Q: 金額
-    totalKm,            // R: 総走行距離
-    p.note || '',       // S: 備考
-    p.userId,           // T: 投稿userId
-    displayName,        // U: 投稿者表示名
+    reportedAtServer,    // A: 日付 (Date オブジェクト → Sheets が datetime として保存)
+    driverName,          // B: 運転者 (allowlist.driver_name 正本)
+    p.vehicle,           // C: 車両
+    effectiveFrom,       // D: 出発地 (バス時は '')
+    padded[0],           // E: 到着1
+    padded[1],           // F: 到着2
+    padded[2],           // G: 到着3
+    padded[3],           // H: 到着4
+    padded[4],           // I: 到着5
+    padded[5],           // J: 到着6
+    padded[6],           // K: 到着7
+    padded[7],           // L: 到着8
+    p.mode,              // M: バス (モード文字列)
+    fareYen,             // N: 金額（円）
+    Number(p.odoStart),  // O: 距離（始）
+    Number(p.odoEnd),    // P: 距離（終）
+    '',                  // Q: 距離（始）〜到着１ (Phase 1 未算出)
+    '',                  // R: 距離（到着１〜到着２）
+    '',                  // S: 距離（到着２〜到着３）
+    '',                  // T: 距離（到着３〜到着４）
+    '',                  // U: 距離（到着４〜到着５）
+    '',                  // V: 距離（到着５〜到着６）
+    '',                  // W: 距離（到着６〜到着７）
+    '',                  // X: 距離（到着７〜到着８）
+    totalKm,             // Y: 総走行距離（km）
+    p.note || '',        // Z: 備考
+    '',                  // AA: 出発写真URL (Phase 1 未収集)
+    '',                  // AB: 到着写真URL到着１
+    '',                  // AC: 到着写真URL到着２
+    '',                  // AD: 到着写真URL到着３
+    '',                  // AE: 到着写真URL到着４
+    '',                  // AF: 到着写真URL到着５
+    '',                  // AG: 到着写真URL到着６
+    '',                  // AH: 到着写真URL到着７
+    '',                  // AI: 到着写真URL到着８
   ];
 }
 
