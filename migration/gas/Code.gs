@@ -508,13 +508,15 @@ function readMaster_(sheetName, expectedColumns) {
 // --- Power Automate bridge (修理10/11: Google Sheet → OneDrive Excel) ---
 
 /**
- * dateValue から対象月の OneDrive ExcelPath を組み立てる (修理11)。
+ * dateValue から対象月の OneDrive ExcelPath を組み立てる (修理11 + 修理12)。
  *
- *   /Shared Documents/General/雇用/送迎/{YYYY}年送迎記録表/送迎{M全角}月自動反映.xlsx
+ *   /Shared Documents/General/雇用/送迎/{YYYY}年送迎記録表/送迎{M}月自動反映.xlsx
  *
- * 既存実ファイル名が 全角数字 + .xlsx のため、月は 全角 に変換し拡張子は
- * .xlsx で固定する (directive の .xlsm より実ファイル名一致を優先)。
- * 1..9 月は 1 桁 全角 (例 ４月)、10..12 月は 2 桁 全角 (例 １０月)。
+ * 既存 OneDrive 実ファイル名の月は 全角 (U+FF13..FF19) が既定 (ls 検証済)。
+ * 拡張子は .xlsx で固定 (directive の .xlsm より実ファイル名一致を優先)。
+ * Script Property `MONTH_DIGIT_WIDTH`:
+ *   'zenkaku' (既定): ４月, ５月, １０月 等
+ *   'hankaku':        4月, 5月, 10月 等 (SharePoint 側が半角で登録されているとき)
  * タイムゾーンは Asia/Tokyo で固定し月跨ぎの UTC ずれを防ぐ。
  */
 function excelPathForDate_(dateValue) {
@@ -523,9 +525,10 @@ function excelPathForDate_(dateValue) {
     throw new Error('excelPathForDate_ got invalid date: ' + dateValue);
   }
   var y = Utilities.formatDate(d, 'Asia/Tokyo', 'yyyy');
-  var m = Number(Utilities.formatDate(d, 'Asia/Tokyo', 'M'));
-  var zenkaku = toZenkakuDigits_(String(m));
-  return '/Shared Documents/General/雇用/送迎/' + y + '年送迎記録表/送迎' + zenkaku + '月自動反映.xlsx';
+  var mNum = Number(Utilities.formatDate(d, 'Asia/Tokyo', 'M'));
+  var width = (getProp_('MONTH_DIGIT_WIDTH') || 'zenkaku').toLowerCase();
+  var mStr = (width === 'hankaku') ? String(mNum) : toZenkakuDigits_(String(mNum));
+  return '/Shared Documents/General/雇用/送迎/' + y + '年送迎記録表/送迎' + mStr + '月自動反映.xlsx';
 }
 
 function toZenkakuDigits_(s) {

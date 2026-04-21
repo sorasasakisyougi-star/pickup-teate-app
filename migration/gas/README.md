@@ -48,7 +48,8 @@ GAS エディタ左 ⚙️ Project Settings → Script properties → Add:
 | `SHEET_ID` | Step 1 でメモした Spreadsheet ID |
 | `TEST_MODE` | `1` (test sheet に書き込み) |
 | `TIMEZONE` | `Asia/Tokyo` |
-| `POWER_AUTOMATE_WEBHOOK_URL` | 旧送迎システム (pages/api/powerautomate.ts) が使っている Power Automate Flow の HTTP trigger URL。OneDrive Excel への自動反映に必須 (未設定なら skip して 投稿ログ に `excel_sync_skipped:webhook_url_unset` が残るだけ)。**ExcelPath は Script Property に置かない** — Code.gs `excelPathForDate_` が 日付から対象月のパス `/Shared Documents/General/雇用/送迎/YYYY年送迎記録表/送迎{M全角}月自動反映.xlsx` を動的組立 (修理11) |
+| `POWER_AUTOMATE_WEBHOOK_URL` | 旧送迎システム (pages/api/powerautomate.ts) が使っている Power Automate Flow の HTTP trigger URL。OneDrive Excel への自動反映に必須 (未設定なら skip して 投稿ログ に `excel_sync_skipped:webhook_url_unset` が残るだけ)。**ExcelPath は Script Property に置かない** — Code.gs `excelPathForDate_` が 日付から対象月のパス `/Shared Documents/General/雇用/送迎/YYYY年送迎記録表/送迎{M}月自動反映.xlsx` を動的組立 (修理11) |
+| `MONTH_DIGIT_WIDTH` (任意) | `zenkaku` (既定) / `hankaku`。ExcelPath の月部分を 全角 (`４月`) にするか 半角 (`4月`) にするか切替。OneDrive 実ファイル名は現行 全角 (U+FF13..FF19) なので未設定でよい。SharePoint 上で半角で登録されている場合のみ `hankaku` に設定 (修理12) |
 
 **注意**: `LIFF_ID` はここでは入れない。Step 5 で LIFF app を作成してから Step 6 で入れる。
 
