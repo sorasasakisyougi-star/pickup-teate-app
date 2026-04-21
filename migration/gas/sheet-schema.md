@@ -26,6 +26,17 @@
 - `運転者名` は **保存正本** — `送迎記録_test.B` に入る値。`運転者マスタ` に同じ値の行が無ければ保存失敗 (`driver_not_in_master`)
 - PIN は 送迎記録_test / 投稿ログ に **残さない** (本マスタにだけ存在させる)
 
+### 運用ルール (固定)
+
+1. **1 表示名 = 1 人** 原則: `表示名` の重複行を作らない。重複が入った場合、先頭行が採用され後続行は無視されるため事故になる
+2. **PIN は純数字文字列**: スプレッドシート側で セル書式 = `文字列` にして「1234」などが数値化されないようにする (Code.gs 側でも `String(r.PIN)` で比較する)
+3. **有給と送迎で PIN は共通**: 有給報告で配布済みの PIN をそのまま `B: PIN` に転記する (別 PIN を発行しない)
+4. **送迎不要な人は `送迎利用可=FALSE`**: 事務員など有給だけ使う人は `active=TRUE / 送迎利用可=FALSE` で登録し、送迎ログインを弾く
+5. **退職者は `active=FALSE`**: 行は消さず `active=FALSE` にすることで履歴復元性を維持
+6. **運転者名 は 運転者マスタ と完全一致**: 不一致なら saveReport が `driver_not_in_master` で落ちる。空白差 / 全半角差にも注意
+7. **監査**: 追加 / 変更 / 削除は 会社管理 Google アカウント で行い、シート改訂履歴に残す。PIN を Slack / メール / チャットで共有しない
+8. **PIN の保存場所はこのシートだけ**: Code.gs / index.html / 投稿ログ / 送迎記録_test / Script Properties のいずれにも PIN を書かない
+
 ---
 
 ## `許可マスタ` (LEGACY — 修理8 で未使用化、削除しない)
@@ -120,7 +131,7 @@ GAS Code.gs `buildRow_` は **実シート** の列順に合わせる (migration
 | 列 | ヘッダ (実シート) | Phase 1 の書き込み内容 | 例 |
 |---|---|---|---|
 | A | 日付 | Date オブジェクト (Sheets が datetime 保存) | `2026/4/19 10:15:00` |
-| B | 運転者 | allowlist.driver_name | 山田太郎 |
+| B | 運転者 | `送迎PINマスタ.運転者名` (保存正本、運転者マスタ に存在することを saveReport 内で検証) | 山田太郎 |
 | C | 車両 | 車両マスタから選択 | ハイエース |
 | D | 出発地 | 地点マスタから選択 (バス時は空) | 会社 |
 | E | 到着１ | 地点マスタから選択 | A病院 |
@@ -156,8 +167,8 @@ GAS Code.gs `buildRow_` は **実シート** の列順に合わせる (migration
 | AI | 到着写真URL到着８ | **空** | (空) |
 
 **重要: 実シートには `userId` / `displayName` 列は存在しない。**
-これらの監査データは `投稿ログ` タブに userId (+ timestamp) として残す。
-`display_name` は 許可マスタ から逆引きできるため二重記録しない。
+監査データは `投稿ログ` タブに `loginName` (= 送迎PINマスタ.表示名) と timestamp として残す。
+運転者名は 送迎PINマスタ から逆引きできるため二重記録しない。
 
 ### 区間距離 (Q..X) の契約 (実シート既存行 217 件 検証結果)
 
@@ -195,13 +206,16 @@ ODO始 / ODO終 (O/P) と 備考 (Z) は通常どおり書く。
 
 ## `投稿ログ`
 
-| A: timestamp | B: userId | C: action | D: result | E: message |
+| A: timestamp | B: loginName | C: action | D: result | E: message |
 |---|---|---|---|---|
-| `2026-04-19T10:15:00+09:00` | `Uxxx...` | saveReport | ok | - |
-| `2026-04-19T10:15:20+09:00` | `Uzzz...` | saveReport | unauthorized | - |
-| `2026-04-19T10:16:01+09:00` | `Uxxx...` | saveReport | error | `fare_not_registered: 会社 → 未登録地点` |
+| `2026-04-19T10:15:00+09:00` | アジ | saveReport | ok | - |
+| `2026-04-19T10:15:20+09:00` | 退職者 | saveReport | unauthorized | `inactive_user` |
+| `2026-04-19T10:16:01+09:00` | アジ | saveReport | error | `fare_not_registered` |
 
-`userId` と `message` が機微情報 (LINE userId は外部公開しない)。このシートを社外共有する場合は列削除してから。
+- B列は `送迎PINマスタ.表示名` (旧 LINE userId 方式のログは legacy フォールバック時のみ残る)
+- **PIN は絶対に書かない**。`Code.gs.logPost_` は第 2 引数に `loginName` だけ渡す
+- `message` には error code と補助情報しか入れない (`fare_not_registered` 等)
+- 社外共有時は B列 (loginName) を秘匿扱いで削除してから
 
 ---
 

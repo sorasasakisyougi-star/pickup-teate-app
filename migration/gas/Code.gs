@@ -438,12 +438,17 @@ function buildRow_(p, fareYen, totalKm, driverName, reportedAtServer) {
 
 // --- Logging --------------------------------------------------------------
 
-function logPost_(whenDate, userId, action, result, message) {
+/**
+ * 投稿ログ へ 1 行追記する。
+ * 契約: PIN を引数に取らない・書き込まない。第 2 引数は subject (新本線 = loginName、
+ *       legacy フォールバック時 = userId) で、呼出側が 1 つだけ渡す。
+ */
+function logPost_(whenDate, subject, action, result, message) {
   try {
     var sh = getSheetByName_('投稿ログ');
     sh.appendRow([
       Utilities.formatDate(whenDate || new Date(), 'Asia/Tokyo', "yyyy-MM-dd'T'HH:mm:ssXXX"),
-      userId || '',
+      subject || '',
       action || '',
       result || '',
       message || '',
