@@ -283,10 +283,15 @@ function resolveTotalKm_(payload) {
  *   Y=総走行距離（km） Z=備考
  *   AA=出発写真URL AB..AI=到着写真URL到着1..8
  *
- * Phase 1 で未扱い:
- *   - 区間距離 (Q..X): 旧本線もドライバ報告の ODO 差分のみで保存するケース多数 (Q..X は空欄可)
- *   - 写真URL (AA..AI): Phase 1 は LIFF 直接入力のみ、写真アップロード未実装
- * 以上は空文字で埋める。Y (総走行距離) は ODO 差分で常に数値。
+ * 区間距離 (Q..X) の契約 (実シート既存行 217 件検証済):
+ *   - 到着 1 件の通常ルート: Q = Y (= ODO 差分)、R..X は空欄 (67/67 行 R..X 空)
+ *   - 到着 2 件以上の通常ルート: 各区間に個別実測距離が入っている (sum(Q..X)==Y)。
+ *     Phase 1 LIFF フォームには区間距離入力欄が無いため再現不能。
+ *     勝手に合計を Q に集約せず Q..X 全空で保存し、実シート既存契約と衝突させない
+ *     (「Phase 1 では未対応」= 区間内訳なし)。
+ *   - バス: Q..X 空欄 (既存挙動継続)。
+ * 写真URL (AA..AI): Phase 1 は LIFF 直接入力のみ、写真アップロード未実装で空欄。
+ * Y (総走行距離) は resolveTotalKm_ (ODO 差分) で常に数値。
  *
  * userId / displayName は **実シートに列が無い**。監査は 投稿ログ タブで完結
  * (allowlist 経由で display_name を逆引きできるので二重記録はしない)。
@@ -301,6 +306,10 @@ function buildRow_(p, fareYen, totalKm, driverName, reportedAtServer) {
     : (p.arrivals || []).filter(function(a) { return a && String(a).trim(); });
   var padded = effectiveArrivals.slice(0, 8);
   while (padded.length < 8) padded.push('');
+
+  // 区間距離 Q (距離（始）〜到着１) は 到着 1 件の通常ルートに限り totalKm と一致させる
+  // (実シート既存運用の契約)。到着 2 件以上 / バス / 通常ルート以外は Q..X 全空。
+  var qSegment = (!isBus && effectiveArrivals.length === 1) ? totalKm : '';
 
   return [
     reportedAtServer,    // A: 日付 (Date オブジェクト → Sheets が datetime として保存)
@@ -319,7 +328,7 @@ function buildRow_(p, fareYen, totalKm, driverName, reportedAtServer) {
     fareYen,             // N: 金額（円）
     Number(p.odoStart),  // O: 距離（始）
     Number(p.odoEnd),    // P: 距離（終）
-    '',                  // Q: 距離（始）〜到着１ (Phase 1 未算出)
+    qSegment,            // Q: 距離（始）〜到着１ (到着1件の通常ルートは totalKm、他は '')
     '',                  // R: 距離（到着１〜到着２）
     '',                  // S: 距離（到着２〜到着３）
     '',                  // T: 距離（到着３〜到着４）
