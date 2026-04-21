@@ -96,24 +96,11 @@ function loginAndLoadMasters(displayName, pin) {
   };
 }
 
-// --- loadMasters (LEGACY: LINE userId 方式、未使用化) --------------------
-
-/**
- * @deprecated 修理8 で PIN ログイン方式へ切替。新本線は loginAndLoadMasters 参照。
- * 既存 許可マスタ 行の緊急フォールバック用に残す (いきなり削除しない)。
- */
-function loadMasters(userId) {
-  var allow = checkAllowed_(userId);
-  if (!allow.ok) {
-    throw new Error(allow.reason);
-  }
-  return {
-    vehicles:  loadVehicleNames_(),
-    locations: loadLocationNames_(),
-    displayName: allow.displayName,
-    driverName:  allow.driverName,
-  };
-}
+// --- loadMasters (REMOVED in 修理18) -------------------------------------
+// 旧 LINE userId 方式 (loadMasters / checkAllowed_) は 修理8 で legacy 化、
+// 修理18 でセキュリティ監査の HIGH 指摘を受けて削除。
+// 今後の認証経路は loginAndLoadMasters + checkAllowedByPin_ のみ。
+// 許可マスタ タブはオペレーターが削除するまで残してよい (未参照扱い)。
 
 // --- saveReport (google.script.run から呼ばれる) -------------------------
 
@@ -244,6 +231,47 @@ function saveReport(payload) {
   }
 }
 
+// --- Brute force lockout (修理18) ----------------------------------------
+
+/**
+ * 修理18: PIN ブルートフォース対策。
+ * 投稿ログ を時系列後ろから走査し、同じ loginName の result='unauthorized' が
+ * 直近 WINDOW 内に MAX_FAIL 回以上あれば locked を返す。
+ * 専用シートを追加しない (既存 投稿ログ を再利用) ので schema 変更なし。
+ */
+function checkLoginLockout_(loginName) {
+  var WINDOW_MS = 10 * 60 * 1000;   // 10 分
+  var MAX_FAIL = 10;                // 10 回で lock
+  if (!loginName) return { locked: false };
+  try {
+    var sh = getSheetByName_('投稿ログ');
+    var last = sh.getLastRow();
+    if (last < 2) return { locked: false, count: 0 };
+    // 直近 200 行だけ走査 (WINDOW 内に 200 失敗が入らない想定、I/O 節約)
+    var from = Math.max(2, last - 199);
+    var values = sh.getRange(from, 1, last - from + 1, 5).getValues();
+    var now = Date.now();
+    var count = 0;
+    for (var i = values.length - 1; i >= 0; i--) {
+      var ts = values[i][0];
+      var subject = String(values[i][1] || '');
+      var result = String(values[i][3] || '');
+      if (subject !== loginName) continue;
+      if (result !== 'unauthorized') continue;
+      var tsTime = (ts instanceof Date) ? ts.getTime() : new Date(ts).getTime();
+      if (isNaN(tsTime)) continue;
+      if (now - tsTime > WINDOW_MS) break;
+      count++;
+      if (count >= MAX_FAIL) return { locked: true, count: count };
+    }
+    return { locked: false, count: count };
+  } catch (e) {
+    // 投稿ログ 読込失敗でも認証本線を壊さない (open-fail)。ログだけ残す。
+    Logger.log('checkLoginLockout_ read failed: ' + e);
+    return { locked: false, error: String(e) };
+  }
+}
+
 // --- Allowlist: PIN 方式 (新本線) -----------------------------------------
 
 /**
@@ -260,6 +288,12 @@ function saveReport(payload) {
 function checkAllowedByPin_(loginName, pin) {
   if (!loginName) return { ok: false, reason: 'missing_login_name' };
   if (!pin)       return { ok: false, reason: 'missing_pin' };
+  // 修理18: PIN ブルートフォース対策 — 直近 10 分で unauthorized が 10 回以上なら lock。
+  // 失敗回数は 投稿ログ (既存) を走査してカウントするので、新シートを追加しない最小差分。
+  var lock = checkLoginLockout_(loginName);
+  if (lock.locked) {
+    return { ok: false, reason: 'too_many_attempts' };
+  }
   var rows = readMaster_('送迎PINマスタ',
     ['表示名', 'PIN', 'active', '送迎利用可', '運転者名']);
   for (var i = 0; i < rows.length; i++) {
@@ -280,28 +314,8 @@ function checkAllowedByPin_(loginName, pin) {
   return { ok: false, reason: 'user_not_registered' };
 }
 
-// --- Allowlist: LINE userId 方式 (LEGACY、修理8 で未使用化) --------------
-
-/**
- * @deprecated 修理8 で PIN ログイン方式へ切替。checkAllowedByPin_ を使うこと。
- */
-function checkAllowed_(userId) {
-  if (!userId) return { ok: false, reason: 'missing_user_id' };
-  var rows = readMaster_('許可マスタ', ['line_user_id', 'display_name', 'role', 'active', 'driver_name']);
-  for (var i = 0; i < rows.length; i++) {
-    if (rows[i].line_user_id !== userId) continue;
-    var active = rows[i].active === true || rows[i].active === 'TRUE';
-    if (!active) return { ok: false, reason: 'inactive_user' };
-    var role = String(rows[i].role || '');
-    if (role !== '送迎報告' && role !== '両方') {
-      return { ok: false, reason: 'role_not_permitted' };
-    }
-    var driverName = String(rows[i].driver_name || '').trim();
-    if (!driverName) return { ok: false, reason: 'missing_driver_name' };
-    return { ok: true, displayName: rows[i].display_name, driverName: driverName };
-  }
-  return { ok: false, reason: 'user_not_registered' };
-}
+// --- Allowlist: LINE userId 方式 (REMOVED in 修理18) ---------------------
+// checkAllowed_ は 修理18 で削除。許可マスタ タブもオペレーター側で削除可能。
 
 // --- Master loaders (server-side 正本) -----------------------------------
 
@@ -845,12 +859,15 @@ function resolvePhotoUrls_(payload, reportedAtServer, loginName) {
   var result = { depart: '', arrivals: ['', '', '', '', '', '', '', ''] };
   if (!payload || !payload.photos) return result;
   var ts = Utilities.formatDate(reportedAtServer, 'Asia/Tokyo', 'yyyyMMdd_HHmmss');
-  var rand = Math.random().toString(36).slice(2, 8);
+  // 修理18: Math.random (6文字, 低エントロピー) → UUID (16進 32文字の前半 16文字, 64bit 相当)
+  // 旧システム pickup-teate-app と URL pattern 互換を保ちつつ、URL 推測による写真閲覧を困難化。
+  var rand = Utilities.getUuid().replace(/-/g, '').slice(0, 16);
   if (payload.photos.depart) {
     var dName = 'depart_' + ts + '_' + rand + '.jpg';
     var dRes = uploadPhotoToSupabase_(payload.photos.depart, dName);
     if (dRes.ok) result.depart = dRes.url;
-    else Logger.log('resolvePhotoUrls_ depart failed login=' + loginName +
+    // 修理18: Logger.log から loginName を削除 (Cloud ログ編集者が PII を見えないように)
+    else Logger.log('resolvePhotoUrls_ depart failed' +
       ' status=' + (dRes.status || 0) + ' reason=' + (dRes.reason || '') +
       ' body=' + (dRes.body || ''));
   }
@@ -860,7 +877,7 @@ function resolvePhotoUrls_(payload, reportedAtServer, loginName) {
     var aName = 'arrive_' + (i + 1) + '_' + ts + '_' + rand + '.jpg';
     var aRes = uploadPhotoToSupabase_(arrivals[i], aName);
     if (aRes.ok) result.arrivals[i] = aRes.url;
-    else Logger.log('resolvePhotoUrls_ arrive_' + (i + 1) + ' failed login=' + loginName +
+    else Logger.log('resolvePhotoUrls_ arrive_' + (i + 1) + ' failed' +
       ' status=' + (aRes.status || 0) + ' reason=' + (aRes.reason || '') +
       ' body=' + (aRes.body || ''));
   }

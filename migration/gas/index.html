@@ -440,6 +440,7 @@
       if (msg.indexOf('unauthorized:missing_driver_name') === 0) return '送迎PINマスタの 運転者名 が未設定です';
       if (msg.indexOf('unauthorized:missing_login_name') === 0) return '表示名を選択してください';
       if (msg.indexOf('unauthorized:missing_pin') === 0) return 'PIN を入力してください';
+      if (msg.indexOf('unauthorized:too_many_attempts') === 0) return 'ログイン失敗が多すぎます。10 分後に再試行してください';
       if (msg.indexOf('invalid:too_many_arrivals') === 0) return '到着地は最大 8 件です';
       if (msg.indexOf('invalid:missing_odo') === 0) return 'ODO を数値で入力してください';
       if (msg.indexOf('invalid:odo_end_before_start') === 0) return 'ODO (到着) は ODO (出発) 以上にしてください';
