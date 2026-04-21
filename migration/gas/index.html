@@ -461,28 +461,34 @@
     }
 
     function tryInitLiff_(cb) {
-      // 修理19: LIFF SDK 初期化後に IDToken を取得して state に保持する。
+      // 修理19/21: LIFF SDK 初期化後に IDToken を取得して state に保持する。
       // LIFF_CHANNEL_ID サーバ側設定済みならこの IDToken がないと全機能 unauthorized になる。
-      // 初期化失敗 (ブラウザ直接アクセス 等) は cb(false) で呼び出し側へ通知。
+      // 修理21: 8 秒の safety timeout を入れる (SDK が応答しない時に cb を発火)。
       if (typeof liff === 'undefined' || !LIFF_ID) { cb(false); return; }
-      liff.init({ liffId: LIFF_ID })
-        .then(function() {
-          if (!liff.isLoggedIn()) {
-            // 未ログイン → LINE ログイン画面へリダイレクト (LIFF 標準挙動)
-            liff.login();
-            cb(false);
-            return;
-          }
-          try {
-            state.idToken = liff.getIDToken() || '';
-          } catch (e) {
-            state.idToken = '';
-          }
-          cb(true);
-        })
-        .catch(function(e) {
-          cb(false);
-        });
+      var called = false;
+      var fire = function(ok) { if (!called) { called = true; cb(ok); } };
+      setTimeout(function() { fire(false); }, 8000);
+      try {
+        liff.init({ liffId: LIFF_ID })
+          .then(function() {
+            if (!liff.isLoggedIn()) {
+              // 未ログイン → LINE ログイン画面へリダイレクト (LIFF 標準挙動)
+              // redirect 中に cb(false) を先に fire しないと UI が止まる
+              fire(false);
+              liff.login();
+              return;
+            }
+            try {
+              state.idToken = liff.getIDToken() || '';
+            } catch (e) {
+              state.idToken = '';
+            }
+            fire(true);
+          })
+          .catch(function() { fire(false); });
+      } catch (_) {
+        fire(false);
+      }
     }
 
     $('#login-btn').addEventListener('click', function() {
@@ -511,10 +517,20 @@
     });
 
     (function bootstrap() {
-      // 修理19: LIFF 初期化 & IDToken 取得 → サーバ呼出 に state.idToken を必ず付ける。
+      // 修理19/21: LIFF 初期化 & IDToken 取得 → サーバ呼出 に state.idToken を必ず付ける。
+      // 修理21: 読込が 15 秒以上固まった場合はタイムアウトさせて操作を復帰させる。
+      var bootstrapDone = false;
+      var timeoutHandle = setTimeout(function() {
+        if (bootstrapDone) return;
+        bootstrapDone = true;
+        setError('読込タイムアウト。LIFF を開き直すか、ブラウザを再読込してください');
+      }, 15000);
       tryInitLiff_(function(liffOk) {
         google.script.run
           .withSuccessHandler(function(names) {
+            if (bootstrapDone) return;
+            bootstrapDone = true;
+            clearTimeout(timeoutHandle);
             hide($('#state-loading'));
             var sel = $('#login-name');
             sel.innerHTML = '<option value="">選択</option>';
@@ -526,6 +542,9 @@
             show($('#login'));
           })
           .withFailureHandler(function(err) {
+            if (bootstrapDone) return;
+            bootstrapDone = true;
+            clearTimeout(timeoutHandle);
             var msg = (err && err.message) ? err.message : String(err);
             if (msg.indexOf('unauthorized:missing_idtoken') >= 0 ||
                 msg.indexOf('unauthorized:idtoken_') >= 0) {
