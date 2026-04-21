@@ -156,3 +156,67 @@ grep -nE 'appendRow|logPost_|Logger\.log' migration/gas/Code.gs | grep -i 'pin'
 | 失敗系 F2 UI メッセージ | |
 | 失敗系 F3 UI メッセージ | |
 | 合格判定 | PASS / FAIL |
+
+---
+
+## 7. OneDrive Excel ブリッジ E2E 受入 (修理10–12)
+
+### 7.1 Script Properties セットアップ
+
+| key | 値 | 必須 |
+|---|---|---|
+| `POWER_AUTOMATE_WEBHOOK_URL` | Power Automate Flow の HTTP trigger URL | **必須** (未設定なら 投稿ログ に `excel_sync_skipped:webhook_url_unset`) |
+| `MONTH_DIGIT_WIDTH` | `zenkaku` (既定) or `hankaku` | 任意。SharePoint 実ファイル名が半角の場合のみ `hankaku` |
+| ~~`EXCEL_PATH`~~ | **削除する** — 使っていない。Properties に残っていたら Delete。正本は `MONTH_DIGIT_WIDTH` + 動的 ExcelPath に統一 | — |
+
+### 7.2 Apps Script 実行ログの出力項目 (修理12 以降)
+
+Code.gs `postRowToPowerAutomate_` は 1 件送信ごとに以下 4 つを必ず出す:
+
+```
+postRowToPowerAutomate_ monthDigitWidth=<zenkaku|hankaku> ExcelPath=<full path> status=<code> body=<prefix 500 chars>
+```
+
+skip 時:
+```
+postRowToPowerAutomate_ skipped monthDigitWidth=<...> ExcelPath=<...> reason=webhook_url_unset
+```
+
+例外時:
+```
+postRowToPowerAutomate_ fetch_exception monthDigitWidth=<...> ExcelPath=<...> err=<error>
+```
+
+### 7.3 response status 別 トリアージ
+
+| status | response body | 一次判断 | 対処 |
+|---|---|---|---|
+| 2xx | 空 or Flow の OK 応答 | 成功 | OneDrive Excel の t_orders を確認して終わり |
+| 400 | **必ず body を読む**。Flow の schema 検証エラーなら payload のキーや型 | **即切替しない** | body の指摘箇所を Code.gs の `toPowerAutomatePayload_` と突合。`MONTH_DIGIT_WIDTH` 切替では直らない |
+| 404 + body が `file not found` / `ExcelPath not resolved` 系 | ExcelPath 文字列不一致が濃厚 | `MONTH_DIGIT_WIDTH` を切替可 | Script Property `MONTH_DIGIT_WIDTH=hankaku` を追加 (または削除して既定に戻す) → もう 1 件送信 → 再確認 |
+| 404 + body が別系 | 別原因 (Flow ID 失効 / URL 変更 等) | まず body を読む | Flow URL 更新 or Flow 側確認 |
+| 401/403 | auth error | Webhook URL の署名失効 | 新 URL に差し替え |
+| 5xx | Flow 内部エラー | Power Automate 側 | Power Automate ポータル → 実行履歴 → エラー詳細 |
+
+### 7.4 E2E 証明の 3 点セット (必ず保存)
+
+1 件送信ごとに、以下 3 つをスクショ or テキストで保存:
+
+1. **Apps Script 実行ログ** (`postRowToPowerAutomate_` 行の全文、`monthDigitWidth` / `ExcelPath` / `status` / `body` 4 項目必ず全部入り)
+2. **Power Automate 実行履歴** (該当フローの 1 件分、トリガ時刻と成否)
+3. **t_orders 追記結果** (OneDrive Excel Sheet1 or t_orders テーブルの末尾行スクショ、送信した 日付 / 運転者 / 車両 / 金額 / 総走行距離 Y が一致していること)
+
+3 点がそろって初めて E2E PASS とする。欠けたら FAIL。
+
+### 7.5 E2E チェックリスト
+
+- [ ] `POWER_AUTOMATE_WEBHOOK_URL` を Script Properties に登録済
+- [ ] `EXCEL_PATH` が残っていないか確認、残っていたら削除
+- [ ] 再デプロイ済
+- [ ] LIFF から 通常ルート 1 件送信 → Apps Script ログ `status=2xx`、ExcelPath が 4 月ファイル、monthDigitWidth が想定値
+- [ ] Power Automate 実行履歴に 4 月送信の 1 件が成功で並ぶ
+- [ ] OneDrive 4 月 Excel の t_orders に 1 行増えた (運転者 / 金額 / 総走行距離 Y が送信値と一致)
+- [ ] LIFF から バス 1 件送信 → 同様に 4 月 Excel に 1 行増える (D=空, N=2000)
+- [ ] テスト用に 5 月日付で 1 件送信 → Apps Script ログの ExcelPath が 5 月ファイルに切替 / t_orders も 5 月ファイル側に追記
+- [ ] Google Sheet 投稿ログ に `result=ok, message=''` (sync 成功時) or `message=excel_sync_failed:status=...` (失敗時) が残る
+- [ ] Google Sheet 投稿ログ / 送迎記録_test / Apps Script ログ のどれにも PIN 文字列が混入していない

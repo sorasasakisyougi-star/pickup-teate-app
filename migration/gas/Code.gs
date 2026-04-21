@@ -615,7 +615,12 @@ function toPowerAutomatePayload_(savedRow, dateValue) {
  */
 function postRowToPowerAutomate_(payload) {
   var url = getProp_('POWER_AUTOMATE_WEBHOOK_URL');
-  if (!url) return { ok: false, skipped: true, reason: 'webhook_url_unset' };
+  var monthDigitWidth = (getProp_('MONTH_DIGIT_WIDTH') || 'zenkaku').toLowerCase();
+  if (!url) {
+    Logger.log('postRowToPowerAutomate_ skipped monthDigitWidth=' + monthDigitWidth +
+      ' ExcelPath=' + payload.ExcelPath + ' reason=webhook_url_unset');
+    return { ok: false, skipped: true, reason: 'webhook_url_unset' };
+  }
   var opts = {
     method: 'post',
     contentType: 'application/json',
@@ -627,7 +632,8 @@ function postRowToPowerAutomate_(payload) {
     var res = UrlFetchApp.fetch(url, opts);
     var status = res.getResponseCode();
     var text = String(res.getContentText() || '').slice(0, 500);
-    Logger.log('postRowToPowerAutomate_ ExcelPath=' + payload.ExcelPath +
+    Logger.log('postRowToPowerAutomate_ monthDigitWidth=' + monthDigitWidth +
+      ' ExcelPath=' + payload.ExcelPath +
       ' status=' + status + ' body=' + text);
     return {
       ok: (status >= 200 && status < 300),
@@ -636,7 +642,8 @@ function postRowToPowerAutomate_(payload) {
       text: text,
     };
   } catch (e) {
-    Logger.log('postRowToPowerAutomate_ fetch_exception: ' + e);
+    Logger.log('postRowToPowerAutomate_ fetch_exception monthDigitWidth=' +
+      monthDigitWidth + ' ExcelPath=' + payload.ExcelPath + ' err=' + e);
     return { ok: false, skipped: false, status: 0, reason: 'fetch_exception:' + e };
   }
 }
