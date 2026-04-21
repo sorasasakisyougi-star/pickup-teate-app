@@ -79,9 +79,21 @@
       <input type="hidden" name="mode" value="通常ルート">
     </div>
 
+    <!-- 修理16: 出発ブロック (地点 + ODO + 写真) をまとめて上に、その後に到着リスト。
+         到着を挟んで出発情報が分断されないレイアウト。 -->
     <div class="row">
       <label>出発地</label>
       <select name="from" required><option value="">選択</option></select>
+    </div>
+
+    <div class="row">
+      <label>ODO (出発)</label>
+      <input type="number" name="odoStart" inputmode="numeric" required>
+    </div>
+
+    <div class="row" id="depart-photo-row">
+      <label>出発時の写真 (任意)</label>
+      <input type="file" id="depart-photo" accept="image/*" capture="environment">
     </div>
 
     <div class="row arrivals">
@@ -90,19 +102,9 @@
       <button type="button" class="add-btn" id="add-arrival">＋ 到着を追加</button>
     </div>
 
-    <div class="row">
-      <label>ODO (出発)</label>
-      <input type="number" name="odoStart" inputmode="numeric" required>
-    </div>
-
     <div class="row" id="odo-end-row">
       <label>ODO (到着 / バス時のみ)</label>
       <input type="number" name="odoEnd" inputmode="numeric">
-    </div>
-
-    <div class="row" id="depart-photo-row">
-      <label>出発時の写真 (任意)</label>
-      <input type="file" id="depart-photo" accept="image/*" capture="environment">
     </div>
 
     <div class="row">
