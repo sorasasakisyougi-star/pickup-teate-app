@@ -127,6 +127,7 @@
     var state = {
       loginName: null,
       pin: null,
+      idToken: '',           // 修理19: LIFF IDToken (ログイン時取得、全サーバ呼出で渡す)
       locations: [],
       mode: '通常ルート',
     };
@@ -402,6 +403,7 @@
         var payload = {
           loginName: state.loginName,
           pin: state.pin,
+          idToken: state.idToken, // 修理19: LIFF IDToken をサーバ側で再検証
           vehicle: f.vehicle.value,
           mode: state.mode,
           from: isBus ? '' : f.from.value,
@@ -441,6 +443,12 @@
       if (msg.indexOf('unauthorized:missing_login_name') === 0) return '表示名を選択してください';
       if (msg.indexOf('unauthorized:missing_pin') === 0) return 'PIN を入力してください';
       if (msg.indexOf('unauthorized:too_many_attempts') === 0) return 'ログイン失敗が多すぎます。10 分後に再試行してください';
+      if (msg.indexOf('unauthorized:missing_idtoken') === 0) return 'LINE ログインが必要です';
+      if (msg.indexOf('unauthorized:idtoken_expired') === 0) return 'LINE ログインの有効期限切れ。LIFF を開き直してください';
+      if (msg.indexOf('unauthorized:idtoken_aud_mismatch') === 0) return 'LINE チャンネル不一致';
+      if (msg.indexOf('unauthorized:idtoken_verify_failed') === 0) return 'LINE 認証検証失敗';
+      if (msg.indexOf('unauthorized:idtoken_verify_exception') === 0) return 'LINE 認証検証例外';
+      if (msg.indexOf('unauthorized:liff:') === 0) return 'LINE 認証エラー: ' + msg.slice('unauthorized:liff:'.length);
       if (msg.indexOf('invalid:too_many_arrivals') === 0) return '到着地は最大 8 件です';
       if (msg.indexOf('invalid:missing_odo') === 0) return 'ODO を数値で入力してください';
       if (msg.indexOf('invalid:odo_end_before_start') === 0) return 'ODO (到着) は ODO (出発) 以上にしてください';
@@ -452,11 +460,29 @@
       return msg;
     }
 
-    function tryInitLiff_() {
-      // LIFF SDK は入口用に残すが、認証本線ではない。初期化失敗しても UI は起動する。
-      if (typeof liff !== 'undefined' && LIFF_ID) {
-        try { liff.init({ liffId: LIFF_ID }); } catch (_) { /* ignore */ }
-      }
+    function tryInitLiff_(cb) {
+      // 修理19: LIFF SDK 初期化後に IDToken を取得して state に保持する。
+      // LIFF_CHANNEL_ID サーバ側設定済みならこの IDToken がないと全機能 unauthorized になる。
+      // 初期化失敗 (ブラウザ直接アクセス 等) は cb(false) で呼び出し側へ通知。
+      if (typeof liff === 'undefined' || !LIFF_ID) { cb(false); return; }
+      liff.init({ liffId: LIFF_ID })
+        .then(function() {
+          if (!liff.isLoggedIn()) {
+            // 未ログイン → LINE ログイン画面へリダイレクト (LIFF 標準挙動)
+            liff.login();
+            cb(false);
+            return;
+          }
+          try {
+            state.idToken = liff.getIDToken() || '';
+          } catch (e) {
+            state.idToken = '';
+          }
+          cb(true);
+        })
+        .catch(function(e) {
+          cb(false);
+        });
     }
 
     $('#login-btn').addEventListener('click', function() {
@@ -481,28 +507,35 @@
           setError(humanizeError_(msg.indexOf('unauthorized:') === 0 ? msg : 'unauthorized:' + msg));
           $('#login-btn').disabled = false;
         })
-        .loginAndLoadMasters(name, pin);
+        .loginAndLoadMasters(name, pin, state.idToken);
     });
 
     (function bootstrap() {
-      tryInitLiff_();
-      google.script.run
-        .withSuccessHandler(function(names) {
-          hide($('#state-loading'));
-          var sel = $('#login-name');
-          sel.innerHTML = '<option value="">選択</option>';
-          (names || []).forEach(function(n) {
-            var o = document.createElement('option');
-            o.value = n; o.textContent = n;
-            sel.appendChild(o);
-          });
-          show($('#login'));
-        })
-        .withFailureHandler(function(err) {
-          var msg = (err && err.message) ? err.message : String(err);
-          setError('ログイン名の読込に失敗しました: ' + msg);
-        })
-        .loadPickupLoginNames();
+      // 修理19: LIFF 初期化 & IDToken 取得 → サーバ呼出 に state.idToken を必ず付ける。
+      tryInitLiff_(function(liffOk) {
+        google.script.run
+          .withSuccessHandler(function(names) {
+            hide($('#state-loading'));
+            var sel = $('#login-name');
+            sel.innerHTML = '<option value="">選択</option>';
+            (names || []).forEach(function(n) {
+              var o = document.createElement('option');
+              o.value = n; o.textContent = n;
+              sel.appendChild(o);
+            });
+            show($('#login'));
+          })
+          .withFailureHandler(function(err) {
+            var msg = (err && err.message) ? err.message : String(err);
+            if (msg.indexOf('unauthorized:missing_idtoken') >= 0 ||
+                msg.indexOf('unauthorized:idtoken_') >= 0) {
+              setError('LINE ログインが必要です (ブラウザ直接アクセスは不可)');
+            } else {
+              setError('ログイン名の読込に失敗しました: ' + msg);
+            }
+          })
+          .loadPickupLoginNames(state.idToken);
+      });
     })();
   </script>
 </body>

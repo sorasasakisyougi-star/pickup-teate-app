@@ -53,6 +53,7 @@ GAS エディタ左 ⚙️ Project Settings → Script properties → Add:
 | `SUPABASE_URL` | 写真アップロード先の Supabase Project URL。例 `https://agsmbgqxiucfwolfwvsl.supabase.co` (修理15)。未設定なら写真 URL は 送迎記録_test AA..AI 列に空文字が入るだけで saveReport 本線は通る |
 | `SUPABASE_BUCKET` | Supabase Storage バケット名。旧システム流用なら `order-photos` (修理15)。public bucket が前提 |
 | `SUPABASE_SERVICE_ROLE_KEY` | **秘密**。Supabase Dashboard → Project Settings → API → service_role の JWT。**chat/GitHub に絶対貼らない** (修理15)。未設定なら写真アップ skip |
+| `LIFF_CHANNEL_ID` | **本番必須**。LINE Login Channel ID (LIFF が乗っている Channel の ID、数値)。設定済なら LIFF IDToken をサーバ検証して LINE 経由でない直叩きを弾く (修理19)。未設定なら検証 skip で Logger.log に警告 (開発環境のみ許容、本番では必ず設定) |
 
 **注意**: `LIFF_ID` はここでは入れない。Step 5 で LIFF app を作成してから Step 6 で入れる。
 

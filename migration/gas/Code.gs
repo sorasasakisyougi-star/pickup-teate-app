@@ -32,6 +32,49 @@ function getLiffId_()  { return getProp_('LIFF_ID'); }
 function getSheetId_() { return getProp_('SHEET_ID'); }
 function isTestMode_() { return getProp_('TEST_MODE') === '1'; }
 
+/**
+ * 修理19: LIFF IDToken をサーバ検証する。
+ * LINE の verify API に POST し、aud (client_id) が Script Property LIFF_CHANNEL_ID と一致、
+ * かつ exp が未来であることを確認する。
+ * LIFF_CHANNEL_ID が未設定なら検証 skip (開発環境 / 段階移行用のフォールバック、
+ * 本番運用では 必ず LIFF_CHANNEL_ID を設定して直叩き経路を塞ぐこと)。
+ * 返り値: { ok, reason?, sub?, skipped? }
+ */
+function verifyLiffIdToken_(idToken) {
+  var channelId = getProp_('LIFF_CHANNEL_ID');
+  if (!channelId) {
+    // 未設定 = 開発/段階移行。本番では必ず設定する。検証 skip だが Logger.log で警告。
+    Logger.log('verifyLiffIdToken_ skipped (LIFF_CHANNEL_ID unset)');
+    return { ok: true, skipped: true };
+  }
+  if (!idToken) return { ok: false, reason: 'missing_idtoken' };
+  try {
+    var res = UrlFetchApp.fetch('https://api.line.me/oauth2/v2.1/verify', {
+      method: 'post',
+      contentType: 'application/x-www-form-urlencoded',
+      payload: 'id_token=' + encodeURIComponent(idToken) +
+               '&client_id=' + encodeURIComponent(channelId),
+      muteHttpExceptions: true,
+    });
+    var status = res.getResponseCode();
+    if (status !== 200) {
+      return { ok: false, reason: 'idtoken_verify_failed_status_' + status };
+    }
+    var claims = JSON.parse(res.getContentText());
+    if (String(claims.aud) !== String(channelId)) {
+      return { ok: false, reason: 'idtoken_aud_mismatch' };
+    }
+    var now = Math.floor(Date.now() / 1000);
+    if (claims.exp && Number(claims.exp) < now) {
+      return { ok: false, reason: 'idtoken_expired' };
+    }
+    return { ok: true, sub: claims.sub };
+  } catch (e) {
+    Logger.log('verifyLiffIdToken_ fetch_exception: ' + e);
+    return { ok: false, reason: 'idtoken_verify_exception' };
+  }
+}
+
 function getSpreadsheet_() {
   var id = getSheetId_();
   if (!id) throw new Error('SHEET_ID が未設定です');
@@ -64,9 +107,15 @@ function doGet() {
 
 /**
  * ログイン画面の 表示名 select を埋めるために active=TRUE && 送迎利用可=TRUE の
- * 行の表示名だけを返す (PIN は返さない)。認証前呼び出しなので PIN/userId は受け取らない。
+ * 行の表示名だけを返す (PIN は返さない)。
+ * 修理19: LIFF IDToken をサーバ検証し、LINE 経由でない直叩きを弾く。
+ *         LIFF_CHANNEL_ID が未設定の環境 (開発用) では検証 skip。
  */
-function loadPickupLoginNames() {
+function loadPickupLoginNames(idToken) {
+  var verify = verifyLiffIdToken_(idToken);
+  if (!verify.ok) {
+    throw new Error('unauthorized:' + verify.reason);
+  }
   return readMaster_('送迎PINマスタ',
       ['表示名', 'PIN', 'active', '送迎利用可', '運転者名'])
     .filter(function(r) {
@@ -82,8 +131,13 @@ function loadPickupLoginNames() {
  * 表示名+PIN を検証してフォーム初期化用のマスタを返す (新本線)。
  * 運転者名は 送迎PINマスタ.運転者名 が正本なので UI へは driverName/displayName
  * だけを返す (運転者リストは UI の select 対象にしない)。
+ * 修理19: LIFF IDToken をサーバ検証し、LINE 経由でない直叩きを弾く。
  */
-function loginAndLoadMasters(displayName, pin) {
+function loginAndLoadMasters(displayName, pin, idToken) {
+  var verify = verifyLiffIdToken_(idToken);
+  if (!verify.ok) {
+    throw new Error('unauthorized:' + verify.reason);
+  }
   var allow = checkAllowedByPin_(displayName, pin);
   if (!allow.ok) {
     throw new Error(allow.reason);
@@ -130,7 +184,14 @@ function saveReport(payload) {
   var reportedAtServer = new Date();
   var loginName = payload && payload.loginName ? String(payload.loginName) : '';
   var pin       = payload && payload.pin       ? String(payload.pin)       : '';
+  var idToken   = payload && payload.idToken   ? String(payload.idToken)   : '';
   try {
+    // 修理19: LIFF IDToken サーバ検証 (PIN よりも先にチェック = 直叩きをそもそも不可に)
+    var liff = verifyLiffIdToken_(idToken);
+    if (!liff.ok) {
+      logPost_(reportedAtServer, loginName, 'saveReport', 'unauthorized', 'liff:' + liff.reason);
+      throw new Error('unauthorized:' + liff.reason);
+    }
     var allow = checkAllowedByPin_(loginName, pin);
     if (!allow.ok) {
       logPost_(reportedAtServer, loginName, 'saveReport', 'unauthorized', allow.reason);
