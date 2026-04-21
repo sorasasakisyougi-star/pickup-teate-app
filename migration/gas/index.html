@@ -164,32 +164,34 @@
       wrap.style.padding = '8px';
       wrap.style.border = '1px solid #ddd';
       wrap.style.borderRadius = '8px';
-      // 1行目: select + ODO + 削除
+      // 修理17: 3 行レイアウトで「ファイル選択」ボタンが見切れない構成に変更。
+      // 行1: 到着地 select + × 削除
       var line1 = document.createElement('div');
       line1.style.display = 'flex';
       line1.style.gap = '6px';
       line1.style.alignItems = 'center';
       var sel = document.createElement('select');
       sel.name = 'arrival';
-      sel.style.flex = '2';
+      sel.style.flex = '1';
       renderLocationOptions(sel, state.locations);
       if (state.mode === 'バス') sel.disabled = true;
       line1.appendChild(sel);
-      var odoInput = document.createElement('input');
-      odoInput.type = 'number';
-      odoInput.inputMode = 'numeric';
-      odoInput.name = 'arrivalOdo';
-      odoInput.placeholder = 'ODO 到着';
-      odoInput.style.flex = '1';
-      odoInput.style.minWidth = '90px';
-      if (state.mode === 'バス') odoInput.disabled = true;
-      line1.appendChild(odoInput);
       var btn = document.createElement('button');
       btn.type = 'button'; btn.className = 'remove'; btn.textContent = '×';
       btn.onclick = function() { wrap.remove(); };
       line1.appendChild(btn);
       wrap.appendChild(line1);
-      // 2行目: 到着地写真 (修理15)
+      // 行2: ODO 到着 単独
+      var odoInput = document.createElement('input');
+      odoInput.type = 'number';
+      odoInput.inputMode = 'numeric';
+      odoInput.name = 'arrivalOdo';
+      odoInput.placeholder = 'ODO 到着';
+      odoInput.style.marginTop = '6px';
+      odoInput.style.width = '100%';
+      if (state.mode === 'バス') odoInput.disabled = true;
+      wrap.appendChild(odoInput);
+      // 行3: 到着地写真 (フル幅でファイル選択ボタン見切れ防止)
       var photo = document.createElement('input');
       photo.type = 'file';
       photo.name = 'arrivalPhoto';
