@@ -95,9 +95,9 @@
       <input type="number" name="odoStart" inputmode="numeric" required>
     </div>
 
-    <div class="row">
-      <label>ODO (到着)</label>
-      <input type="number" name="odoEnd" inputmode="numeric" required>
+    <div class="row" id="odo-end-row">
+      <label>ODO (到着 / バス時のみ)</label>
+      <input type="number" name="odoEnd" inputmode="numeric">
     </div>
 
     <div class="row">
@@ -154,12 +154,24 @@
       var row = document.createElement('div');
       row.className = 'arrival-row';
       row.style.margin = '6px 0';
+      row.style.gap = '6px';
+      // 到着地 select
       var sel = document.createElement('select');
       sel.name = 'arrival';
+      sel.style.flex = '2';
       renderLocationOptions(sel, state.locations);
-      // バスモード中の追加行は最初から disabled にしておく
       if (state.mode === 'バス') sel.disabled = true;
       row.appendChild(sel);
+      // ODO 到着N 入力欄 (修理14: 各到着地点で実測した累積 ODO を入力)
+      var odoInput = document.createElement('input');
+      odoInput.type = 'number';
+      odoInput.inputMode = 'numeric';
+      odoInput.name = 'arrivalOdo';
+      odoInput.placeholder = 'ODO 到着';
+      odoInput.style.flex = '1';
+      odoInput.style.minWidth = '90px';
+      if (state.mode === 'バス') odoInput.disabled = true;
+      row.appendChild(odoInput);
       var btn = document.createElement('button');
       btn.type = 'button'; btn.className = 'remove'; btn.textContent = '×';
       btn.onclick = function() { row.remove(); };
@@ -171,6 +183,20 @@
       return Array.prototype.slice.call($('#arrivals-list').querySelectorAll('select'))
         .map(function(s) { return s.value; })
         .filter(function(v) { return v; });
+    }
+
+    // 修理14: 到着 select と ODO input は同じ arrival-row に並んでいる。
+    // 空欄 select の行は除外して、残った行の arrivalOdo を数値化して返す。
+    // 返り値の length は getArrivals() と一致する (saveReport の検証前提)。
+    function getArrivalOdos() {
+      return Array.prototype.slice.call($('#arrivals-list').querySelectorAll('.arrival-row'))
+        .map(function(row) {
+          var s = row.querySelector('select[name=arrival]');
+          var o = row.querySelector('input[name=arrivalOdo]');
+          return { arrival: s ? s.value : '', odo: o ? o.value : '' };
+        })
+        .filter(function(p) { return p.arrival; })
+        .map(function(p) { return p.odo === '' ? null : Number(p.odo); });
     }
 
     function renderFormFromMasters(m) {
@@ -192,6 +218,8 @@
       var metaName = m.displayName || m.driverName || '';
       $('#user-meta').textContent = '投稿者: ' + metaName + (TEST_MODE ? '  [test sheet]' : '');
       show($('#form'));
+      // 修理14: 初期は通常ルート → odoEnd 行を隠す
+      applyModeUI_();
     }
 
     function applyModeUI_() {
@@ -207,16 +235,32 @@
         fromSel.setAttribute('required', 'required');
         fromSel.disabled = false;
       }
-      // arrivals UI は視覚的に disabled、送信時も空で送る
+      // arrivals 行 (到着 select + ODO 到着N) は視覚的に disabled、送信時も空で送る
       var arrList = $('#arrivals-list');
-      arrList.querySelectorAll('select').forEach(function(s) {
+      arrList.querySelectorAll('select[name=arrival]').forEach(function(s) {
         s.disabled = isBus;
         if (isBus) s.value = '';
+      });
+      arrList.querySelectorAll('input[name=arrivalOdo]').forEach(function(o) {
+        o.disabled = isBus;
+        if (isBus) o.value = '';
       });
       $('#add-arrival').disabled = isBus;
       var fromRow = fromSel.parentElement;
       fromRow.style.opacity = isBus ? '0.5' : '1';
       $('.arrivals').style.opacity = isBus ? '0.5' : '1';
+      // 修理14: ODO(到着) 単独欄はバス時のみ必須/表示。通常ルートは arrivalOdos から導出する。
+      var odoEndInput = $('input[name=odoEnd]');
+      var odoEndRow = $('#odo-end-row');
+      if (isBus) {
+        odoEndInput.setAttribute('required', 'required');
+        odoEndRow.style.display = '';
+        odoEndRow.style.opacity = '1';
+      } else {
+        odoEndInput.removeAttribute('required');
+        odoEndInput.value = '';
+        odoEndRow.style.display = 'none';
+      }
     }
 
     document.querySelectorAll('.mode-toggle button').forEach(function(b) {
@@ -244,6 +288,19 @@
       }
       // 運転者 / 報告時刻はクライアント側で組まない — server が 送迎PINマスタ と new Date() で確定する。
       // バスは from / arrivals を空で送る (既存本線と揃える)。
+      // 修理14: 通常ルートは arrivalOdos (各到着地点の累積 ODO) を送る。
+      //         バスは odoEnd を従来通り送る (Q..X は server 側で空のまま)。
+      var arrivalOdos = isBus ? [] : getArrivalOdos();
+      if (!isBus) {
+        if (arrivalOdos.length !== arrivals.length) {
+          setError('各到着地点の ODO (到着) を全て入力してください');
+          return;
+        }
+        if (arrivalOdos.some(function(v) { return v === null || !isFinite(v); })) {
+          setError('ODO (到着) を数値で入力してください');
+          return;
+        }
+      }
       var payload = {
         loginName: state.loginName,
         pin: state.pin,
@@ -251,8 +308,9 @@
         mode: state.mode,
         from: isBus ? '' : f.from.value,
         arrivals: isBus ? [] : arrivals,
+        arrivalOdos: arrivalOdos,
         odoStart: Number(f.odoStart.value),
-        odoEnd: Number(f.odoEnd.value),
+        odoEnd: isBus ? Number(f.odoEnd.value) : 0,
         note: f.note.value,
       };
       $('#submit').disabled = true;

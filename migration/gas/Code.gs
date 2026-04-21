@@ -324,20 +324,56 @@ function validatePayload_(p) {
   if (p.mode !== '通常ルート' && p.mode !== 'バス') {
     return { ok: false, error: 'invalid_mode' };
   }
-  // バスは from / arrivals を問わない (既存本線 pages/api/powerautomate.ts:1023-1024 と揃える)。
-  // 通常ルートのみ from 必須 + arrivals 1..8。
-  if (p.mode === '通常ルート') {
-    if (!p.from) return { ok: false, error: 'missing_from' };
-    var arrivals = Array.isArray(p.arrivals)
-      ? p.arrivals.filter(function(a) { return a && String(a).trim(); })
-      : [];
-    if (arrivals.length === 0) return { ok: false, error: 'missing_arrivals' };
-    if (arrivals.length > 8) return { ok: false, error: 'too_many_arrivals' };
+  var s = Number(p.odoStart);
+  if (!isFinite(s)) return { ok: false, error: 'missing_odo_start' };
+
+  if (p.mode === 'バス') {
+    // バスは from / arrivals を問わない (pages/api/powerautomate.ts:1023-1024 と揃える)。
+    // odoEnd が必要。
+    var e = Number(p.odoEnd);
+    if (!isFinite(e)) return { ok: false, error: 'missing_odo_end' };
+    if (e < s) return { ok: false, error: 'odo_end_before_start' };
+    return { ok: true };
   }
-  var s = Number(p.odoStart), e = Number(p.odoEnd);
-  if (!isFinite(s) || !isFinite(e)) return { ok: false, error: 'missing_odo' };
-  if (e < s) return { ok: false, error: 'odo_end_before_start' };
+
+  // 通常ルート: from 必須 + arrivals 1..8
+  if (!p.from) return { ok: false, error: 'missing_from' };
+  var arrivals = Array.isArray(p.arrivals)
+    ? p.arrivals.filter(function(a) { return a && String(a).trim(); })
+    : [];
+  if (arrivals.length === 0) return { ok: false, error: 'missing_arrivals' };
+  if (arrivals.length > 8) return { ok: false, error: 'too_many_arrivals' };
+
+  // 修理14: 通常ルートは arrivalOdos (各到着地点の累積 ODO) で総走行距離を計算する。
+  // 旧クライアント互換: arrivalOdos が未送信なら p.odoEnd にフォールバックする。
+  if (Array.isArray(p.arrivalOdos) && p.arrivalOdos.length > 0) {
+    if (p.arrivalOdos.length !== arrivals.length) {
+      return { ok: false, error: 'arrival_odos_length_mismatch' };
+    }
+    var prev = s;
+    for (var i = 0; i < p.arrivalOdos.length; i++) {
+      var cur = Number(p.arrivalOdos[i]);
+      if (!isFinite(cur)) return { ok: false, error: 'missing_arrival_odo' };
+      if (cur < prev) return { ok: false, error: 'arrival_odo_not_monotonic' };
+      prev = cur;
+    }
+  } else {
+    var e2 = Number(p.odoEnd);
+    if (!isFinite(e2)) return { ok: false, error: 'missing_odo_end' };
+    if (e2 < s) return { ok: false, error: 'odo_end_before_start' };
+  }
   return { ok: true };
+}
+
+/**
+ * 修理14: 通常ルートで arrivalOdos が提供されていればその末尾を返す (= 最終到着地の ODO)。
+ * バス / 旧クライアント互換ケースでは payload.odoEnd を返す。
+ */
+function resolveEffectiveOdoEnd_(p) {
+  if (p.mode === '通常ルート' && Array.isArray(p.arrivalOdos) && p.arrivalOdos.length > 0) {
+    return Number(p.arrivalOdos[p.arrivalOdos.length - 1]);
+  }
+  return Number(p.odoEnd);
 }
 
 // --- Fare / distance lookup ----------------------------------------------
@@ -369,7 +405,8 @@ function resolveFare_(payload) {
  * validatePayload_ が既に odoStart/odoEnd を数値検査 + e >= s を確認済。
  */
 function resolveTotalKm_(payload) {
-  return Math.round((Number(payload.odoEnd) - Number(payload.odoStart)) * 10) / 10;
+  var effectiveEnd = resolveEffectiveOdoEnd_(payload);
+  return Math.round((effectiveEnd - Number(payload.odoStart)) * 10) / 10;
 }
 
 // --- Row assembly (実シート 送迎記録_test 35 列レイアウトと一致) ---------
@@ -408,10 +445,28 @@ function buildRow_(p, fareYen, totalKm, driverName, reportedAtServer) {
     : (p.arrivals || []).filter(function(a) { return a && String(a).trim(); });
   var padded = effectiveArrivals.slice(0, 8);
   while (padded.length < 8) padded.push('');
+  var effectiveOdoEnd = resolveEffectiveOdoEnd_(p);
 
-  // 区間距離 Q (距離（始）〜到着１) は 到着 1 件の通常ルートに限り totalKm と一致させる
-  // (実シート既存運用の契約)。到着 2 件以上 / バス / 通常ルート以外は Q..X 全空。
-  var qSegment = (!isBus && effectiveArrivals.length === 1) ? totalKm : '';
+  // 修理14: 区間距離 Q..X
+  //   - 通常ルート + arrivalOdos: 各到着地 ODO 差分で 8 区間埋める (0.1 km 丸め)
+  //   - 通常ルート 到着1件 (arrivalOdos 未送信 = 旧クライアント): Q = totalKm、他空 (修理7 契約)
+  //   - 通常ルート 到着2件以上 (arrivalOdos 未送信): Q..X 全空 (Phase 1 以前挙動、保守)
+  //   - バス: Q..X 全空
+  var segments = [];
+  if (!isBus) {
+    if (Array.isArray(p.arrivalOdos) && p.arrivalOdos.length === effectiveArrivals.length
+        && effectiveArrivals.length > 0) {
+      var prev = Number(p.odoStart);
+      for (var k = 0; k < p.arrivalOdos.length; k++) {
+        var cur = Number(p.arrivalOdos[k]);
+        segments.push(Math.round((cur - prev) * 10) / 10);
+        prev = cur;
+      }
+    } else if (effectiveArrivals.length === 1) {
+      segments.push(totalKm);
+    }
+  }
+  while (segments.length < 8) segments.push('');
 
   return [
     reportedAtServer,    // A: 日付 (Date オブジェクト → Sheets が datetime として保存)
@@ -429,18 +484,18 @@ function buildRow_(p, fareYen, totalKm, driverName, reportedAtServer) {
     p.mode,              // M: バス (モード文字列)
     fareYen,             // N: 金額（円）
     Number(p.odoStart),  // O: 距離（始）
-    Number(p.odoEnd),    // P: 距離（終）
-    qSegment,            // Q: 距離（始）〜到着１ (到着1件の通常ルートは totalKm、他は '')
-    '',                  // R: 距離（到着１〜到着２）
-    '',                  // S: 距離（到着２〜到着３）
-    '',                  // T: 距離（到着３〜到着４）
-    '',                  // U: 距離（到着４〜到着５）
-    '',                  // V: 距離（到着５〜到着６）
-    '',                  // W: 距離（到着６〜到着７）
-    '',                  // X: 距離（到着７〜到着８）
+    effectiveOdoEnd,     // P: 距離（終） (通常ルートは arrivalOdos 末尾、バス/旧クライアントは payload.odoEnd)
+    segments[0],         // Q: 距離（始）〜到着１
+    segments[1],         // R: 距離（到着１〜到着２）
+    segments[2],         // S: 距離（到着２〜到着３）
+    segments[3],         // T: 距離（到着３〜到着４）
+    segments[4],         // U: 距離（到着４〜到着５）
+    segments[5],         // V: 距離（到着５〜到着６）
+    segments[6],         // W: 距離（到着６〜到着７）
+    segments[7],         // X: 距離（到着７〜到着８）
     totalKm,             // Y: 総走行距離（km）
     p.note || '',        // Z: 備考
-    '',                  // AA: 出発写真URL (Phase 1 未収集)
+    '',                  // AA: 出発写真URL (修理15 で埋める予定)
     '',                  // AB: 到着写真URL到着１
     '',                  // AC: 到着写真URL到着２
     '',                  // AD: 到着写真URL到着３
