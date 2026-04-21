@@ -204,6 +204,18 @@ ODO始 / ODO終 (O/P) と 備考 (Z) は通常どおり書く。
 
 `送迎記録_test` と完全一致の 35 列構成 (コピーで OK)。Phase 1 時点では空でもタブは作っておく。
 
+## OneDrive Excel 反映 (修理10: Power Automate ブリッジ)
+
+`Code.gs` は `saveReport` 成功直後に Power Automate Webhook を叩いて
+OneDrive の `送迎N月自動反映.xlsx` Sheet1 へ 1 行転送する。
+ペイロードは旧送迎システム (`pages/api/powerautomate.ts:175-215` の `PowerAutomatePayload` 型) と同じ 35 フィールド + `ExcelPath` 1 フィールド。
+
+- Script Properties `POWER_AUTOMATE_WEBHOOK_URL` / `EXCEL_PATH` を設定済のとき発火
+- 未設定の場合は自動で skip し、`投稿ログ` に `excel_sync_skipped:webhook_url_unset` が残る (Google Sheet 保存は成功扱い)
+- webhook 失敗時も Google Sheet 保存は成功扱い、`投稿ログ` に `excel_sync_failed:status=...` が残る
+- 既存行 (Google Sheet にしか入っていない 2 行等) の遡及反映は `replaySheetRowsToExcel` 関数を GAS Editor 手動実行
+- Webhook payload には **PIN / loginName を含めない** (`運転者` = `送迎PINマスタ.運転者名` のみ送る)
+
 ## `投稿ログ`
 
 | A: timestamp | B: loginName | C: action | D: result | E: message |

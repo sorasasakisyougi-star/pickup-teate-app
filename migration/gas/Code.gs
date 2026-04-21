@@ -202,7 +202,17 @@ function saveReport(payload) {
     var row = buildRow_(payload, fareYen, totalKm, allow.driverName, reportedAtServer);
     sh.appendRow(row);
 
-    logPost_(reportedAtServer, loginName, 'saveReport', 'ok', '');
+    // 修理10: Google Sheet 書込成功後に OneDrive Excel 側へブリッジ転送する。
+    // 既存 Power Automate Flow (旧 pickup.vege-office.com /api/powerautomate が使ってきたもの) を
+    // GAS から直接叩くだけ。forward 失敗は saveReport 本線を壊さない
+    // (ok を返し、投稿ログ に sync 状態だけ残す)。
+    var sync = forwardToPowerAutomate_(
+      payload, allow.driverName, fareYen, totalKm, reportedAtServer);
+    var syncMsg = '';
+    if (sync.skipped) syncMsg = 'excel_sync_skipped:' + sync.reason;
+    else if (!sync.ok) syncMsg = 'excel_sync_failed:status=' + (sync.status || 0);
+
+    logPost_(reportedAtServer, loginName, 'saveReport', 'ok', syncMsg);
     return {
       ok: true,
       savedAt: Utilities.formatDate(reportedAtServer, 'Asia/Tokyo', "yyyy-MM-dd'T'HH:mm:ssXXX"),
@@ -487,4 +497,146 @@ function readMaster_(sheetName, expectedColumns) {
     out.push(obj);
   }
   return out;
+}
+
+// --- Power Automate forwarder (修理10: Google Sheet → OneDrive Excel ブリッジ) ---
+
+/**
+ * 保存成功後に Power Automate Webhook へ 1 行転送する (OneDrive Excel 反映用)。
+ * 既存の旧送迎システム (pages/api/powerautomate.ts の契約) と同じペイロード形式で送る。
+ * Script Properties:
+ *   - POWER_AUTOMATE_WEBHOOK_URL (必須、未設定なら skipped)
+ *   - EXCEL_PATH (OneDrive Excel のパス / ID、Flow 側契約に合わせて設定)
+ * 返り値: { skipped?, ok?, status?, reason? } — 失敗しても throw しない。
+ * PIN は payload に含めない (関数シグネチャも pin を受け取らない)。
+ */
+function forwardToPowerAutomate_(p, driverName, fareYen, totalKm, reportedAtServer) {
+  var url = getProp_('POWER_AUTOMATE_WEBHOOK_URL');
+  if (!url) return { skipped: true, reason: 'webhook_url_unset' };
+  var excelPath = getProp_('EXCEL_PATH') || '';
+  var body;
+  try {
+    body = buildPowerAutomatePayload_(
+      p, driverName, fareYen, totalKm, reportedAtServer, excelPath);
+  } catch (e) {
+    return { skipped: false, ok: false, status: 0, reason: 'payload_build_failed:' + e };
+  }
+  var opts = {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify(body),
+    muteHttpExceptions: true,
+    followRedirects: true,
+  };
+  try {
+    var res = UrlFetchApp.fetch(url, opts);
+    var status = res.getResponseCode();
+    return { skipped: false, ok: (status >= 200 && status < 300), status: status };
+  } catch (e) {
+    return { skipped: false, ok: false, status: 0, reason: 'fetch_exception:' + e };
+  }
+}
+
+/**
+ * Power Automate Flow が期待するペイロード (pages/api/powerautomate.ts:175-215 と一致) を作る。
+ * 区間距離 (Q..X) は buildRow_ と同じ契約:
+ *   - 到着1件の通常ルート: 距離（始）〜到着１ = totalKm、他 7 区間は ''
+ *   - バス / 到着2件以上: 8 区間全部 ''
+ * 写真URL (出発 + 到着1..8) は Phase 1 未収集なので ''。
+ * 想定距離 / 超過距離 / 距離警告 / 区間警告詳細 は旧本線と同じく常に ''。
+ */
+function buildPowerAutomatePayload_(p, driverName, fareYen, totalKm, reportedAtServer, excelPath) {
+  var isBus = (p.mode === 'バス');
+  var arrivals = isBus
+    ? []
+    : (p.arrivals || []).filter(function(a) { return a && String(a).trim(); });
+  var pad = arrivals.slice(0, 8);
+  while (pad.length < 8) pad.push('');
+  var qSegment = (!isBus && arrivals.length === 1) ? Number(totalKm) : '';
+  var iso = Utilities.formatDate(
+    reportedAtServer instanceof Date ? reportedAtServer : new Date(reportedAtServer),
+    'Asia/Tokyo', "yyyy-MM-dd'T'HH:mm:ssXXX");
+  return {
+    ExcelPath: excelPath,
+    '日付': iso,
+    '運転者': driverName,
+    '車両': p.vehicle || '',
+    '出発地': isBus ? '' : (p.from || ''),
+    '到着１': pad[0], '到着２': pad[1], '到着３': pad[2], '到着４': pad[3],
+    '到着５': pad[4], '到着６': pad[5], '到着７': pad[6], '到着８': pad[7],
+    'バス': p.mode,
+    '金額（円）': Number(fareYen),
+    '距離（始）': Number(p.odoStart),
+    '距離（終）': Number(p.odoEnd),
+    '距離（始）〜到着１': qSegment,
+    '距離（到着１〜到着２）': '',
+    '距離（到着２〜到着３）': '',
+    '距離（到着３〜到着４）': '',
+    '距離（到着４〜到着５）': '',
+    '距離（到着５〜到着６）': '',
+    '距離（到着６〜到着７）': '',
+    '距離（到着７〜到着８）': '',
+    '総走行距離（km）': Number(totalKm),
+    '想定距離（km）': '',
+    '超過距離（km）': '',
+    '距離警告': '',
+    '区間警告詳細': '',
+    '備考': p.note || '',
+    '出発写真URL': '',
+    '到着写真URL到着１': '', '到着写真URL到着２': '', '到着写真URL到着３': '',
+    '到着写真URL到着４': '', '到着写真URL到着５': '', '到着写真URL到着６': '',
+    '到着写真URL到着７': '', '到着写真URL到着８': '',
+  };
+}
+
+// --- Manual replay tool (修理10: 既存 N 行を OneDrive Excel に遡及反映) -------
+
+/**
+ * 送迎記録_test の末尾 N 行を Power Automate Webhook 経由で OneDrive Excel に再送する。
+ * GAS Editor → 関数選択 `replaySheetRowsToExcel` → 実行。引数 N 指定不可のため、
+ * デフォルトは 2 (修理10 受入の 2 行)。異なる N が必要なら一時的に引数値を書き換えて再実行。
+ *
+ * 重複防止の立て付け:
+ *   - 通常フロー (saveReport) は 1 行保存 = 1 回 webhook で自然に重複しない
+ *   - 本 replay 関数は「手動で明示実行する one-shot」であり menu/onEdit からは呼ばない
+ *   - 呼出側が実行前に OneDrive Excel の Sheet1 最新行を確認すること (受入ランブック参照)
+ *
+ * Google Sheet 側は読取のみ (appendRow / updateRange 等は行わない)。
+ * PIN には触れない (sheet に PIN 列は無い + 関数内でも PIN を参照しない)。
+ */
+function replaySheetRowsToExcel() {
+  var n = 2;
+  var sh = getTargetReportSheet_();
+  var last = sh.getLastRow();
+  if (last < 2) return 'no_rows';
+  var from = Math.max(2, last - n + 1);
+  var rows = sh.getRange(from, 1, last - from + 1, 35).getValues();
+  var results = [];
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var dateVal = r[0];
+    var driverName = r[1];
+    var mode = r[12];
+    var arrivals = [r[4],r[5],r[6],r[7],r[8],r[9],r[10],r[11]]
+      .filter(function(v) { return v && String(v).trim(); });
+    var pseudo = {
+      vehicle: r[2],
+      mode: mode,
+      from: r[3],
+      arrivals: arrivals,
+      odoStart: r[14],
+      odoEnd: r[15],
+      note: r[25] || '',
+    };
+    var fare = r[13];
+    var totalKm = r[24];
+    var sync = forwardToPowerAutomate_(
+      pseudo, driverName, fare, totalKm,
+      dateVal instanceof Date ? dateVal : new Date(dateVal));
+    results.push({ row: from + i, sync: sync });
+    logPost_(new Date(), '(replay)', 'replayToExcel', sync.ok ? 'ok' : 'error',
+      'row=' + (from + i) + ' status=' + (sync.status || 0) +
+      (sync.reason ? ' reason=' + sync.reason : ''));
+  }
+  return results;
 }

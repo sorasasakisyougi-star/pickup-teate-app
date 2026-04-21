@@ -48,10 +48,12 @@ GAS エディタ左 ⚙️ Project Settings → Script properties → Add:
 | `SHEET_ID` | Step 1 でメモした Spreadsheet ID |
 | `TEST_MODE` | `1` (test sheet に書き込み) |
 | `TIMEZONE` | `Asia/Tokyo` |
+| `POWER_AUTOMATE_WEBHOOK_URL` | 旧送迎システム (pages/api/powerautomate.ts) が使っている Power Automate Flow の HTTP trigger URL。OneDrive Excel への自動反映に必須 (未設定なら skip して 投稿ログ に `excel_sync_skipped:webhook_url_unset` が残るだけ) |
+| `EXCEL_PATH` | Power Automate Flow が `ExcelPath` 入力で期待する OneDrive 上の Excel パス / ID。値は Flow 側契約と揃える (旧本線の .env `POWER_AUTOMATE_EXCEL_PATH` と同じ値を転記) |
 
 **注意**: `LIFF_ID` はここでは入れない。Step 5 で LIFF app を作成してから Step 6 で入れる。
 
-**禁止**: Channel secret / OAuth token を Properties に入れない。
+**禁止**: Channel secret / OAuth token / PIN を Properties に入れない。`POWER_AUTOMATE_WEBHOOK_URL` は署名付きの URL なので、GitHub / チャット / スクショに貼らない。
 
 ### Step 4: Web app としてデプロイ
 
