@@ -202,15 +202,21 @@ function saveReport(payload) {
     var row = buildRow_(payload, fareYen, totalKm, allow.driverName, reportedAtServer);
     sh.appendRow(row);
 
-    // 修理10: Google Sheet 書込成功後に OneDrive Excel 側へブリッジ転送する。
+    // 修理11: Google Sheet 書込成功後に OneDrive Excel 側へブリッジ転送する。
     // 既存 Power Automate Flow (旧 pickup.vege-office.com /api/powerautomate が使ってきたもの) を
-    // GAS から直接叩くだけ。forward 失敗は saveReport 本線を壊さない
-    // (ok を返し、投稿ログ に sync 状態だけ残す)。
-    var sync = forwardToPowerAutomate_(
-      payload, allow.driverName, fareYen, totalKm, reportedAtServer);
+    // GAS から直接叩くだけ。失敗は saveReport 本線を壊さない (ok を返し、投稿ログ に sync 状態を残す)。
+    // ExcelPath は row[0] の日付から動的導出 (excelPathForDate_) するので Script Property 固定値不要。
     var syncMsg = '';
-    if (sync.skipped) syncMsg = 'excel_sync_skipped:' + sync.reason;
-    else if (!sync.ok) syncMsg = 'excel_sync_failed:status=' + (sync.status || 0);
+    try {
+      var paPayload = toPowerAutomatePayload_(row, reportedAtServer);
+      var sync = postRowToPowerAutomate_(paPayload);
+      if (sync.skipped) syncMsg = 'excel_sync_skipped:' + sync.reason;
+      else if (!sync.ok) syncMsg = 'excel_sync_failed:status=' + (sync.status || 0) +
+        (sync.reason ? ' reason=' + sync.reason : '');
+    } catch (paErr) {
+      syncMsg = 'excel_sync_exception:' + String(paErr && paErr.message || paErr);
+      Logger.log('saveReport PA bridge swallow: ' + paErr);
+    }
 
     logPost_(reportedAtServer, loginName, 'saveReport', 'ok', syncMsg);
     return {
@@ -499,94 +505,137 @@ function readMaster_(sheetName, expectedColumns) {
   return out;
 }
 
-// --- Power Automate forwarder (修理10: Google Sheet → OneDrive Excel ブリッジ) ---
+// --- Power Automate bridge (修理10/11: Google Sheet → OneDrive Excel) ---
 
 /**
- * 保存成功後に Power Automate Webhook へ 1 行転送する (OneDrive Excel 反映用)。
- * 既存の旧送迎システム (pages/api/powerautomate.ts の契約) と同じペイロード形式で送る。
- * Script Properties:
- *   - POWER_AUTOMATE_WEBHOOK_URL (必須、未設定なら skipped)
- *   - EXCEL_PATH (OneDrive Excel のパス / ID、Flow 側契約に合わせて設定)
- * 返り値: { skipped?, ok?, status?, reason? } — 失敗しても throw しない。
- * PIN は payload に含めない (関数シグネチャも pin を受け取らない)。
+ * dateValue から対象月の OneDrive ExcelPath を組み立てる (修理11)。
+ *
+ *   /Shared Documents/General/雇用/送迎/{YYYY}年送迎記録表/送迎{M全角}月自動反映.xlsx
+ *
+ * 既存実ファイル名が 全角数字 + .xlsx のため、月は 全角 に変換し拡張子は
+ * .xlsx で固定する (directive の .xlsm より実ファイル名一致を優先)。
+ * 1..9 月は 1 桁 全角 (例 ４月)、10..12 月は 2 桁 全角 (例 １０月)。
+ * タイムゾーンは Asia/Tokyo で固定し月跨ぎの UTC ずれを防ぐ。
  */
-function forwardToPowerAutomate_(p, driverName, fareYen, totalKm, reportedAtServer) {
-  var url = getProp_('POWER_AUTOMATE_WEBHOOK_URL');
-  if (!url) return { skipped: true, reason: 'webhook_url_unset' };
-  var excelPath = getProp_('EXCEL_PATH') || '';
-  var body;
-  try {
-    body = buildPowerAutomatePayload_(
-      p, driverName, fareYen, totalKm, reportedAtServer, excelPath);
-  } catch (e) {
-    return { skipped: false, ok: false, status: 0, reason: 'payload_build_failed:' + e };
+function excelPathForDate_(dateValue) {
+  var d = (dateValue instanceof Date) ? dateValue : new Date(dateValue);
+  if (isNaN(d.getTime())) {
+    throw new Error('excelPathForDate_ got invalid date: ' + dateValue);
   }
+  var y = Utilities.formatDate(d, 'Asia/Tokyo', 'yyyy');
+  var m = Number(Utilities.formatDate(d, 'Asia/Tokyo', 'M'));
+  var zenkaku = toZenkakuDigits_(String(m));
+  return '/Shared Documents/General/雇用/送迎/' + y + '年送迎記録表/送迎' + zenkaku + '月自動反映.xlsx';
+}
+
+function toZenkakuDigits_(s) {
+  return String(s).replace(/[0-9]/g, function(c) {
+    return String.fromCharCode(c.charCodeAt(0) - 0x30 + 0xFF10);
+  });
+}
+
+/**
+ * 送迎記録_test に append した 35 列行 (buildRow_ の出力) から Power Automate Flow の
+ * Parse JSON 契約 (pages/api/powerautomate.ts:175-215 の PowerAutomatePayload 型) に
+ * 一致する 40 キー object を作る。ExcelPath は dateValue (既定: savedRow[0]) から動的導出。
+ *
+ * 契約:
+ *   - ExcelPath は excelPathForDate_ から動的導出 (Script Property 固定値依存しない)
+ *   - 数値項目は Number() に通す。空欄 / 無効値は '' (Parse JSON 契約の permissive 型)
+ *   - 想定距離 / 超過距離 / 距離警告 / 区間警告詳細 は旧本線と同じく常に ''
+ *   - 写真URL (出発 + 到着1..8) は Phase 1 未収集のため 8 + 1 列全て ''
+ *   - PIN / loginName は含めない (savedRow 35 列に PIN カラムが無いため物理的に混入不可)
+ */
+function toPowerAutomatePayload_(savedRow, dateValue) {
+  if (!savedRow || savedRow.length < 35) {
+    throw new Error('toPowerAutomatePayload_ expected 35-col row, got ' + (savedRow && savedRow.length));
+  }
+  var d = (dateValue instanceof Date) ? dateValue :
+          (savedRow[0] instanceof Date) ? savedRow[0] :
+          new Date(savedRow[0]);
+  var iso = Utilities.formatDate(d, 'Asia/Tokyo', "yyyy-MM-dd'T'HH:mm:ssXXX");
+  var str = function(v) { return v === null || v === undefined ? '' : String(v); };
+  var numOrEmpty = function(v) {
+    if (v === '' || v === null || v === undefined) return '';
+    var n = Number(v);
+    return isFinite(n) ? n : '';
+  };
+  return {
+    ExcelPath: excelPathForDate_(d),
+    '日付': iso,
+    '運転者': str(savedRow[1]),
+    '車両': str(savedRow[2]),
+    '出発地': str(savedRow[3]),
+    '到着１': str(savedRow[4]),
+    '到着２': str(savedRow[5]),
+    '到着３': str(savedRow[6]),
+    '到着４': str(savedRow[7]),
+    '到着５': str(savedRow[8]),
+    '到着６': str(savedRow[9]),
+    '到着７': str(savedRow[10]),
+    '到着８': str(savedRow[11]),
+    'バス': str(savedRow[12]),
+    '金額（円）': numOrEmpty(savedRow[13]),
+    '距離（始）': numOrEmpty(savedRow[14]),
+    '距離（終）': numOrEmpty(savedRow[15]),
+    '距離（始）〜到着１': numOrEmpty(savedRow[16]),
+    '距離（到着１〜到着２）': numOrEmpty(savedRow[17]),
+    '距離（到着２〜到着３）': numOrEmpty(savedRow[18]),
+    '距離（到着３〜到着４）': numOrEmpty(savedRow[19]),
+    '距離（到着４〜到着５）': numOrEmpty(savedRow[20]),
+    '距離（到着５〜到着６）': numOrEmpty(savedRow[21]),
+    '距離（到着６〜到着７）': numOrEmpty(savedRow[22]),
+    '距離（到着７〜到着８）': numOrEmpty(savedRow[23]),
+    '総走行距離（km）': numOrEmpty(savedRow[24]),
+    '想定距離（km）': '',
+    '超過距離（km）': '',
+    '距離警告': '',
+    '区間警告詳細': '',
+    '備考': str(savedRow[25]),
+    '出発写真URL': str(savedRow[26]),
+    '到着写真URL到着１': str(savedRow[27]),
+    '到着写真URL到着２': str(savedRow[28]),
+    '到着写真URL到着３': str(savedRow[29]),
+    '到着写真URL到着４': str(savedRow[30]),
+    '到着写真URL到着５': str(savedRow[31]),
+    '到着写真URL到着６': str(savedRow[32]),
+    '到着写真URL到着７': str(savedRow[33]),
+    '到着写真URL到着８': str(savedRow[34]),
+  };
+}
+
+/**
+ * payload を Power Automate Webhook へ POST する (修理11)。
+ * Script Properties: POWER_AUTOMATE_WEBHOOK_URL (必須、未設定なら skipped)
+ * 返り値: { ok, skipped?, status, text?, reason? } — throw しない。
+ * Logger.log で ExcelPath + status + body prefix を残す (Apps Script 実行ログ追跡用)。
+ */
+function postRowToPowerAutomate_(payload) {
+  var url = getProp_('POWER_AUTOMATE_WEBHOOK_URL');
+  if (!url) return { ok: false, skipped: true, reason: 'webhook_url_unset' };
   var opts = {
     method: 'post',
     contentType: 'application/json',
-    payload: JSON.stringify(body),
+    payload: JSON.stringify(payload),
     muteHttpExceptions: true,
     followRedirects: true,
   };
   try {
     var res = UrlFetchApp.fetch(url, opts);
     var status = res.getResponseCode();
-    return { skipped: false, ok: (status >= 200 && status < 300), status: status };
+    var text = String(res.getContentText() || '').slice(0, 500);
+    Logger.log('postRowToPowerAutomate_ ExcelPath=' + payload.ExcelPath +
+      ' status=' + status + ' body=' + text);
+    return {
+      ok: (status >= 200 && status < 300),
+      skipped: false,
+      status: status,
+      text: text,
+    };
   } catch (e) {
-    return { skipped: false, ok: false, status: 0, reason: 'fetch_exception:' + e };
+    Logger.log('postRowToPowerAutomate_ fetch_exception: ' + e);
+    return { ok: false, skipped: false, status: 0, reason: 'fetch_exception:' + e };
   }
-}
-
-/**
- * Power Automate Flow が期待するペイロード (pages/api/powerautomate.ts:175-215 と一致) を作る。
- * 区間距離 (Q..X) は buildRow_ と同じ契約:
- *   - 到着1件の通常ルート: 距離（始）〜到着１ = totalKm、他 7 区間は ''
- *   - バス / 到着2件以上: 8 区間全部 ''
- * 写真URL (出発 + 到着1..8) は Phase 1 未収集なので ''。
- * 想定距離 / 超過距離 / 距離警告 / 区間警告詳細 は旧本線と同じく常に ''。
- */
-function buildPowerAutomatePayload_(p, driverName, fareYen, totalKm, reportedAtServer, excelPath) {
-  var isBus = (p.mode === 'バス');
-  var arrivals = isBus
-    ? []
-    : (p.arrivals || []).filter(function(a) { return a && String(a).trim(); });
-  var pad = arrivals.slice(0, 8);
-  while (pad.length < 8) pad.push('');
-  var qSegment = (!isBus && arrivals.length === 1) ? Number(totalKm) : '';
-  var iso = Utilities.formatDate(
-    reportedAtServer instanceof Date ? reportedAtServer : new Date(reportedAtServer),
-    'Asia/Tokyo', "yyyy-MM-dd'T'HH:mm:ssXXX");
-  return {
-    ExcelPath: excelPath,
-    '日付': iso,
-    '運転者': driverName,
-    '車両': p.vehicle || '',
-    '出発地': isBus ? '' : (p.from || ''),
-    '到着１': pad[0], '到着２': pad[1], '到着３': pad[2], '到着４': pad[3],
-    '到着５': pad[4], '到着６': pad[5], '到着７': pad[6], '到着８': pad[7],
-    'バス': p.mode,
-    '金額（円）': Number(fareYen),
-    '距離（始）': Number(p.odoStart),
-    '距離（終）': Number(p.odoEnd),
-    '距離（始）〜到着１': qSegment,
-    '距離（到着１〜到着２）': '',
-    '距離（到着２〜到着３）': '',
-    '距離（到着３〜到着４）': '',
-    '距離（到着４〜到着５）': '',
-    '距離（到着５〜到着６）': '',
-    '距離（到着６〜到着７）': '',
-    '距離（到着７〜到着８）': '',
-    '総走行距離（km）': Number(totalKm),
-    '想定距離（km）': '',
-    '超過距離（km）': '',
-    '距離警告': '',
-    '区間警告詳細': '',
-    '備考': p.note || '',
-    '出発写真URL': '',
-    '到着写真URL到着１': '', '到着写真URL到着２': '', '到着写真URL到着３': '',
-    '到着写真URL到着４': '', '到着写真URL到着５': '', '到着写真URL到着６': '',
-    '到着写真URL到着７': '', '到着写真URL到着８': '',
-  };
 }
 
 // --- Manual replay tool (修理10: 既存 N 行を OneDrive Excel に遡及反映) -------
@@ -614,25 +663,14 @@ function replaySheetRowsToExcel() {
   var results = [];
   for (var i = 0; i < rows.length; i++) {
     var r = rows[i];
-    var dateVal = r[0];
-    var driverName = r[1];
-    var mode = r[12];
-    var arrivals = [r[4],r[5],r[6],r[7],r[8],r[9],r[10],r[11]]
-      .filter(function(v) { return v && String(v).trim(); });
-    var pseudo = {
-      vehicle: r[2],
-      mode: mode,
-      from: r[3],
-      arrivals: arrivals,
-      odoStart: r[14],
-      odoEnd: r[15],
-      note: r[25] || '',
-    };
-    var fare = r[13];
-    var totalKm = r[24];
-    var sync = forwardToPowerAutomate_(
-      pseudo, driverName, fare, totalKm,
-      dateVal instanceof Date ? dateVal : new Date(dateVal));
+    var dateVal = r[0] instanceof Date ? r[0] : new Date(r[0]);
+    var sync;
+    try {
+      var paPayload = toPowerAutomatePayload_(r, dateVal);
+      sync = postRowToPowerAutomate_(paPayload);
+    } catch (e) {
+      sync = { ok: false, skipped: false, status: 0, reason: 'payload_build_failed:' + e };
+    }
     results.push({ row: from + i, sync: sync });
     logPost_(new Date(), '(replay)', 'replayToExcel', sync.ok ? 'ok' : 'error',
       'row=' + (from + i) + ' status=' + (sync.status || 0) +

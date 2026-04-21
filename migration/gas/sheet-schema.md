@@ -210,7 +210,10 @@ ODO始 / ODO終 (O/P) と 備考 (Z) は通常どおり書く。
 OneDrive の `送迎N月自動反映.xlsx` Sheet1 へ 1 行転送する。
 ペイロードは旧送迎システム (`pages/api/powerautomate.ts:175-215` の `PowerAutomatePayload` 型) と同じ 35 フィールド + `ExcelPath` 1 フィールド。
 
-- Script Properties `POWER_AUTOMATE_WEBHOOK_URL` / `EXCEL_PATH` を設定済のとき発火
+- Script Property `POWER_AUTOMATE_WEBHOOK_URL` 設定済のとき発火 (修理11 以降 `EXCEL_PATH` は使わない)
+- `ExcelPath` は `Code.gs.excelPathForDate_(日付)` が行の日付から対象月のパスを動的に組み立てる:
+  `/Shared Documents/General/雇用/送迎/{YYYY}年送迎記録表/送迎{M全角}月自動反映.xlsx`
+  (実ファイル名に揃え、月は全角 / 拡張子 .xlsx で固定。directive の `.xlsm` 表記より実ファイル名一致を優先)
 - 未設定の場合は自動で skip し、`投稿ログ` に `excel_sync_skipped:webhook_url_unset` が残る (Google Sheet 保存は成功扱い)
 - webhook 失敗時も Google Sheet 保存は成功扱い、`投稿ログ` に `excel_sync_failed:status=...` が残る
 - 既存行 (Google Sheet にしか入っていない 2 行等) の遡及反映は `replaySheetRowsToExcel` 関数を GAS Editor 手動実行
