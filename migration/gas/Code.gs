@@ -688,3 +688,18 @@ function replaySheetRowsToExcel() {
   }
   return results;
 }
+
+// --- Debug tool: 5月 ExcelPath 切替確認 (修理12 追補) -----------------------
+
+/**
+ * 5月日付での ExcelPath 切替だけを確認する手動実行ツール。
+ * GAS Editor → 関数選択 `debugExcelPathForMay_` → 実行 → 実行ログで
+ *   送迎５月自動反映.xlsx  (MONTH_DIGIT_WIDTH=zenkaku 既定)
+ *   送迎5月自動反映.xlsx   (MONTH_DIGIT_WIDTH=hankaku 切替後)
+ * のどちらが出るかを SharePoint 実ファイル名と 1 文字ずつ照合する。
+ * saveReport / postRowToPowerAutomate_ / Google Sheet / Power Automate Flow 本線には触れない。
+ */
+function debugExcelPathForMay_() {
+  var testDate = '2026-05-03T09:00:00+09:00';
+  Logger.log('ExcelPath=' + excelPathForDate_(testDate));
+}
