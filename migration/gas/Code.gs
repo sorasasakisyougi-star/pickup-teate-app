@@ -162,13 +162,19 @@ function loadPickupLoginNames(idToken) {
  * 修理19: LIFF IDToken をサーバ検証し、LINE 経由でない直叩きを弾く。
  */
 function loginAndLoadMasters(displayName, pin, idToken) {
+  var now = new Date();
+  // 修理22: 失敗ログは 投稿ログ に必ず 'unauthorized' で書く。これが無いと
+  // checkLoginLockout_ (修理18) が失敗を数えられず、lockout が動かない。
   var verify = verifyLiffIdToken_(idToken);
   if (!verify.ok) {
+    logPost_(now, displayName || '', 'loginAndLoadMasters', 'unauthorized', 'liff:' + verify.reason);
     throw new Error('unauthorized:' + verify.reason);
   }
   var allow = checkAllowedByPin_(displayName, pin);
   if (!allow.ok) {
-    throw new Error(allow.reason);
+    logPost_(now, displayName || '', 'loginAndLoadMasters', 'unauthorized', allow.reason);
+    // 修理22: saveReport と同じ 'unauthorized:' 接頭辞に統一 (humanizeError_ 前提)
+    throw new Error('unauthorized:' + allow.reason);
   }
   return {
     vehicles:  loadVehicleNames_(),
