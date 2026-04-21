@@ -48,6 +48,24 @@ function verifyLiffIdToken_(idToken) {
     return { ok: true, skipped: true };
   }
   if (!idToken) return { ok: false, reason: 'missing_idtoken' };
+  // 修理20: 検証結果を CacheService に 5 分キャッシュ (LINE verify API は 500ms-2s)。
+  // cache key は IDToken の SHA-256 hash 先頭 40 文字 (token 生値は cache に残さない)。
+  try {
+    var cache = CacheService.getScriptCache();
+    var digest = Utilities.computeDigest(
+      Utilities.DigestAlgorithm.SHA_256,
+      idToken + '|' + channelId);
+    var hashHex = digest.map(function(b) {
+      return ('0' + (b & 0xff).toString(16)).slice(-2);
+    }).join('').slice(0, 40);
+    var cacheKey = 'liff_verify:' + hashHex;
+    var cached = cache.get(cacheKey);
+    if (cached === 'ok') return { ok: true, cached: true };
+    // cached === 'exp' / 'aud' / null: 失敗系は hot retry するため key 共有しない
+  } catch (cacheErr) {
+    // CacheService 失敗してもフェッチで継続
+    cache = null;
+  }
   try {
     var res = UrlFetchApp.fetch('https://api.line.me/oauth2/v2.1/verify', {
       method: 'post',
@@ -68,6 +86,10 @@ function verifyLiffIdToken_(idToken) {
     if (claims.exp && Number(claims.exp) < now) {
       return { ok: false, reason: 'idtoken_expired' };
     }
+    // 成功だけキャッシュ (失敗はキャッシュしない = ロックアウト逃れ防止)
+    if (cache && cacheKey) {
+      try { cache.put(cacheKey, 'ok', 300); } catch (_) { /* ignore */ }
+    }
     return { ok: true, sub: claims.sub };
   } catch (e) {
     Logger.log('verifyLiffIdToken_ fetch_exception: ' + e);
@@ -75,10 +97,16 @@ function verifyLiffIdToken_(idToken) {
   }
 }
 
+// 修理20: invocation 内で SpreadsheetApp.openById を 1 回だけに抑える。
+// GAS V8 はモジュール変数を同一実行中 cache する。これで saveReport が 6回 open →
+// 1回 open に減り、300-1000ms 短縮。
+var _cachedSpreadsheet_ = null;
 function getSpreadsheet_() {
+  if (_cachedSpreadsheet_) return _cachedSpreadsheet_;
   var id = getSheetId_();
   if (!id) throw new Error('SHEET_ID が未設定です');
-  return SpreadsheetApp.openById(id);
+  _cachedSpreadsheet_ = SpreadsheetApp.openById(id);
+  return _cachedSpreadsheet_;
 }
 
 function getSheetByName_(name) {
