@@ -1,15 +1,40 @@
 # Google Sheet スキーマ (Phase 1)
 
-会社管理 Google アカウントで新規作成したスプレッドシート 1 冊に以下 9 タブを作る。
+会社管理 Google アカウントで新規作成したスプレッドシート 1 冊に以下タブを作る。
 タブ名は exact。行 1 はヘッダー。データ行は行 2 以降。
 
 すべての列は **synthetic example** で値の形式を示す。実データ投入は deploy 完了後。
 
 ---
 
-## `許可マスタ`
+## `送迎PINマスタ` (認証正本 — 修理8 で新設)
 
-LINE User ID で「送信権限あり」を判定する正本。Phase 0 時点は空、Phase 2 で自分 1 行を追加。
+有給報告システムで既に配布済みの「名前 + PIN」で本人確認する新本線。
+`Code.gs` の `checkAllowedByPin_` が照合する。
+
+| A: 表示名 | B: PIN | C: active | D: 送迎利用可 | E: 運転者名 |
+|---|---|---|---|---|
+| アジ | 1234 | TRUE | TRUE | アジ |
+| 山田 (太郎) | 5678 | TRUE | TRUE | 山田太郎 |
+| 退職者 | 9999 | FALSE | TRUE | 退職者 |
+| 事務員 | 4321 | TRUE | FALSE | (空欄可) |
+
+- `表示名`: ログイン画面の select に出る値 (人間が見て選べる名前)
+- `PIN`: 有給報告で配布済みの数字文字列 (server 側では string 比較)
+- `active=FALSE` → `unauthorized:inactive_user`
+- `送迎利用可=FALSE` → `unauthorized:pickup_not_permitted` (有給は使えるが送迎は使わない人向け)
+- `運転者名` は **保存正本** — `送迎記録_test.B` に入る値。`運転者マスタ` に同じ値の行が無ければ保存失敗 (`driver_not_in_master`)
+- PIN は 送迎記録_test / 投稿ログ に **残さない** (本マスタにだけ存在させる)
+
+---
+
+## `許可マスタ` (LEGACY — 修理8 で未使用化、削除しない)
+
+> **非推奨**: 認証は 送迎PINマスタ + `checkAllowedByPin_` が新本線。
+> このタブは legacy の LINE userId 方式 (`loadMasters` / `checkAllowed_`) のフォールバック用に
+> 残してある。いきなり削除せず、段階移行が完了したら別途削除判断。
+
+LINE User ID で「送信権限あり」を判定する旧正本。
 
 | A: line_user_id | B: display_name | C: role | D: active | E: driver_name |
 |---|---|---|---|---|

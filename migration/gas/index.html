@@ -43,9 +43,21 @@
     <? if (testMode) { ?><span class="test-badge">TEST</span><? } ?>
   </h1>
 
-  <div id="state-loading" class="banner info">LIFF 初期化中...</div>
+  <div id="state-loading" class="banner info">読み込み中...</div>
   <div id="state-error" class="banner err" hidden></div>
   <div id="state-success" class="banner ok" hidden></div>
+
+  <div id="login" hidden>
+    <div class="row">
+      <label>表示名</label>
+      <select id="login-name" required><option value="">選択</option></select>
+    </div>
+    <div class="row">
+      <label>PIN</label>
+      <input id="login-pin" type="password" inputmode="numeric" autocomplete="off" required>
+    </div>
+    <button type="button" class="submit" id="login-btn">ログイン</button>
+  </div>
 
   <form id="form" hidden>
     <div class="row">
@@ -103,9 +115,11 @@
     var TEST_MODE = <?= testMode ? 'true' : 'false' ?>;
 
     // UI state only. 運転者名 (保存正本) はクライアントに持たせない —
-    // server-side の allowlist.driver_name が唯一の真実。
+    // server-side の 送迎PINマスタ.運転者名 が唯一の真実。
+    // PIN はメモリ上だけに保持して送信時にサーバへ渡す。localStorage 等に書かない。
     var state = {
-      userId: null,
+      loginName: null,
+      pin: null,
       locations: [],
       mode: '通常ルート',
     };
@@ -228,10 +242,11 @@
         setError('到着地を 1 つ以上選択してください');
         return;
       }
-      // 運転者 / 報告時刻はクライアント側で組まない — server が allowlist と new Date() で確定する。
+      // 運転者 / 報告時刻はクライアント側で組まない — server が 送迎PINマスタ と new Date() で確定する。
       // バスは from / arrivals を空で送る (既存本線と揃える)。
       var payload = {
-        userId: state.userId,
+        loginName: state.loginName,
+        pin: state.pin,
         vehicle: f.vehicle.value,
         mode: state.mode,
         from: isBus ? '' : f.from.value,
@@ -251,47 +266,83 @@
         })
         .withFailureHandler(function(err) {
           var msg = (err && err.message) ? err.message : String(err);
-          var human = msg;
-          if (msg.indexOf('unauthorized:user_not_registered') === 0) human = '運転者登録が必要です';
-          else if (msg.indexOf('unauthorized:inactive_user') === 0) human = '運転者登録が無効化されています';
-          else if (msg.indexOf('unauthorized:missing_driver_name') === 0) human = '許可マスタの driver_name が未設定です';
-          else if (msg.indexOf('invalid:too_many_arrivals') === 0) human = '到着地は最大 8 件です';
-          else if (msg.indexOf('invalid:missing_odo') === 0) human = 'ODO を数値で入力してください';
-          else if (msg.indexOf('invalid:odo_end_before_start') === 0) human = 'ODO (到着) は ODO (出発) 以上にしてください';
-          else if (msg === 'driver_not_in_master') human = 'allowlist の driver_name が 運転者マスタに存在しません';
-          else if (msg === 'vehicle_not_registered') human = '車両が 車両マスタに未登録です';
-          else if (msg === 'location_not_registered') human = '地点が 地点マスタに未登録です';
-          else if (msg === 'fare_not_registered') human = '料金マスタが未登録です。管理者に連絡してください';
-          // 距離マスタは optional (旧送迎本線と同じ思想)。distance_not_registered は Code.gs で投げなくなった。
+          var human = humanizeError_(msg);
           setError(human);
           $('#submit').disabled = false;
         })
         .saveReport(payload);
     });
 
-    (async function() {
-      try {
-        await liff.init({ liffId: LIFF_ID });
-        if (!liff.isLoggedIn()) { liff.login(); return; }
-        var profile = await liff.getProfile();
-        state.userId = profile.userId;
+    function humanizeError_(msg) {
+      if (msg.indexOf('unauthorized:user_not_registered') === 0) return '送迎PINマスタに登録がありません';
+      if (msg.indexOf('unauthorized:pin_mismatch') === 0) return 'PIN が違います';
+      if (msg.indexOf('unauthorized:inactive_user') === 0) return '利用者が無効化されています';
+      if (msg.indexOf('unauthorized:pickup_not_permitted') === 0) return '送迎利用が許可されていません';
+      if (msg.indexOf('unauthorized:missing_driver_name') === 0) return '送迎PINマスタの 運転者名 が未設定です';
+      if (msg.indexOf('unauthorized:missing_login_name') === 0) return '表示名を選択してください';
+      if (msg.indexOf('unauthorized:missing_pin') === 0) return 'PIN を入力してください';
+      if (msg.indexOf('invalid:too_many_arrivals') === 0) return '到着地は最大 8 件です';
+      if (msg.indexOf('invalid:missing_odo') === 0) return 'ODO を数値で入力してください';
+      if (msg.indexOf('invalid:odo_end_before_start') === 0) return 'ODO (到着) は ODO (出発) 以上にしてください';
+      if (msg === 'driver_not_in_master') return '送迎PINマスタの 運転者名 が 運転者マスタに存在しません';
+      if (msg === 'vehicle_not_registered') return '車両が 車両マスタに未登録です';
+      if (msg === 'location_not_registered') return '地点が 地点マスタに未登録です';
+      if (msg === 'fare_not_registered') return '料金マスタが未登録です。管理者に連絡してください';
+      // 距離マスタは optional (旧送迎本線と同じ思想)。
+      return msg;
+    }
 
-        google.script.run
-          .withSuccessHandler(function(m) {
-            hide($('#state-loading'));
-            renderFormFromMasters(m);
-          })
-          .withFailureHandler(function(err) {
-            var msg = (err && err.message) ? err.message : String(err);
-            if (msg === 'user_not_registered') setError('運転者登録がありません。管理者にご連絡ください');
-            else if (msg === 'inactive_user') setError('運転者登録が無効になっています');
-            else if (msg === 'missing_driver_name') setError('許可マスタの driver_name が未設定です');
-            else setError('マスタ読込に失敗しました: ' + msg);
-          })
-          .loadMasters(state.userId);
-      } catch (e) {
-        setError('LIFF 初期化に失敗しました: ' + (e && e.message || e));
+    function tryInitLiff_() {
+      // LIFF SDK は入口用に残すが、認証本線ではない。初期化失敗しても UI は起動する。
+      if (typeof liff !== 'undefined' && LIFF_ID) {
+        try { liff.init({ liffId: LIFF_ID }); } catch (_) { /* ignore */ }
       }
+    }
+
+    $('#login-btn').addEventListener('click', function() {
+      var name = $('#login-name').value;
+      var pin  = $('#login-pin').value;
+      if (!name) { setError('表示名を選択してください'); return; }
+      if (!pin)  { setError('PIN を入力してください'); return; }
+      hide($('#state-error'));
+      $('#login-btn').disabled = true;
+      google.script.run
+        .withSuccessHandler(function(m) {
+          state.loginName = name;
+          state.pin = pin;
+          hide($('#login'));
+          hide($('#state-loading'));
+          renderFormFromMasters(m);
+          $('#login-btn').disabled = false;
+          $('#login-pin').value = '';
+        })
+        .withFailureHandler(function(err) {
+          var msg = (err && err.message) ? err.message : String(err);
+          setError(humanizeError_(msg.indexOf('unauthorized:') === 0 ? msg : 'unauthorized:' + msg));
+          $('#login-btn').disabled = false;
+        })
+        .loginAndLoadMasters(name, pin);
+    });
+
+    (function bootstrap() {
+      tryInitLiff_();
+      google.script.run
+        .withSuccessHandler(function(names) {
+          hide($('#state-loading'));
+          var sel = $('#login-name');
+          sel.innerHTML = '<option value="">選択</option>';
+          (names || []).forEach(function(n) {
+            var o = document.createElement('option');
+            o.value = n; o.textContent = n;
+            sel.appendChild(o);
+          });
+          show($('#login'));
+        })
+        .withFailureHandler(function(err) {
+          var msg = (err && err.message) ? err.message : String(err);
+          setError('ログイン名の読込に失敗しました: ' + msg);
+        })
+        .loadPickupLoginNames();
     })();
   </script>
 </body>

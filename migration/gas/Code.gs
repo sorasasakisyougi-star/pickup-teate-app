@@ -1,19 +1,25 @@
 /**
- * Phase 1 — GAS サーバーサイド (Phase 1 skeleton 最小修理後)。
+ * Phase 1 — GAS サーバーサイド (修理8: 名前+PIN ログイン方式へ切替)。
  *
  * 責務:
- *   - doGet: index.html を返す (LIFF_ID を埋め込む)
- *   - loadMasters: 各マスタを読んでフォーム初期化用に返す
- *   - saveReport: 送信されたペイロードを検証して test sheet へ追記
- *   - checkAllowed: 許可マスタで LINE userId を判定
+ *   - doGet: index.html を返す (LIFF_ID を埋め込む、入口用)
+ *   - loadPickupLoginNames: ログイン画面の表示名 select を埋める (新本線)
+ *   - loginAndLoadMasters: 表示名+PIN で認証してマスタを返す (新本線)
+ *   - saveReport: loginName+PIN 再検証 → test sheet へ追記
+ *   - checkAllowedByPin_: 送迎PINマスタ で名前+PIN を判定
  *
  * 原則:
  *   - Phase 0 引継: test sheet 先行 / google.script.run のみ / 会社管理アカウント所有
  *   - doPost は実装しない
  *   - Secrets (Channel secret 等) には触らない
- *   - 運転者名は allowlist 側 driver_name が正本 (クライアント値は使わない)
+ *   - 運転者名は 送迎PINマスタ.運転者名 が正本 (クライアント値は使わない)
  *   - reportedAt も server-side で確定 (クライアント値は使わない)
  *   - vehicle / from / arrivals は server-side でマスタ存在チェック
+ *   - PIN は 送迎記録_test / 投稿ログ に残さない (シートの 送迎PINマスタ にのみ存在)
+ *
+ * Legacy:
+ *   - 旧 loadMasters(userId) / checkAllowed_ は 許可マスタ ベース。いきなり削除せず
+ *     legacy 扱いで残す (新本線は必ず loginAndLoadMasters + 送迎PINマスタ を使う)。
  */
 
 // --- Script Properties accessors ------------------------------------------
@@ -54,12 +60,47 @@ function doGet() {
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
-// --- loadMasters (google.script.run から呼ばれる) ------------------------
+// --- PIN-based login (新本線) --------------------------------------------
 
 /**
- * フォーム初期化用にマスタを返す。呼出前に userId を allowlist で判定する。
- * 運転者名は allowlist 側の driver_name が正本なので UI へは driverName/displayName
+ * ログイン画面の 表示名 select を埋めるために active=TRUE && 送迎利用可=TRUE の
+ * 行の表示名だけを返す (PIN は返さない)。認証前呼び出しなので PIN/userId は受け取らない。
+ */
+function loadPickupLoginNames() {
+  return readMaster_('送迎PINマスタ',
+      ['表示名', 'PIN', 'active', '送迎利用可', '運転者名'])
+    .filter(function(r) {
+      var active = r.active === true || r.active === 'TRUE';
+      var pickupOk = r['送迎利用可'] === true || r['送迎利用可'] === 'TRUE';
+      return active && pickupOk;
+    })
+    .map(function(r) { return String(r['表示名'] || '').trim(); })
+    .filter(function(name) { return name.length > 0; });
+}
+
+/**
+ * 表示名+PIN を検証してフォーム初期化用のマスタを返す (新本線)。
+ * 運転者名は 送迎PINマスタ.運転者名 が正本なので UI へは driverName/displayName
  * だけを返す (運転者リストは UI の select 対象にしない)。
+ */
+function loginAndLoadMasters(displayName, pin) {
+  var allow = checkAllowedByPin_(displayName, pin);
+  if (!allow.ok) {
+    throw new Error(allow.reason);
+  }
+  return {
+    vehicles:  loadVehicleNames_(),
+    locations: loadLocationNames_(),
+    displayName: allow.displayName,
+    driverName:  allow.driverName,
+  };
+}
+
+// --- loadMasters (LEGACY: LINE userId 方式、未使用化) --------------------
+
+/**
+ * @deprecated 修理8 で PIN ログイン方式へ切替。新本線は loginAndLoadMasters 参照。
+ * 既存 許可マスタ 行の緊急フォールバック用に残す (いきなり削除しない)。
  */
 function loadMasters(userId) {
   var allow = checkAllowed_(userId);
@@ -77,49 +118,55 @@ function loadMasters(userId) {
 // --- saveReport (google.script.run から呼ばれる) -------------------------
 
 /**
- * 受け付けるペイロード (クライアント):
+ * 受け付けるペイロード (クライアント、修理8):
  *   {
- *     userId: 'Uxxx...',
- *     vehicle: 'ハイエース',
- *     mode: '通常ルート',    // '通常ルート' | 'バス'
- *     from: '会社',
- *     arrivals: ['A病院', 'B老人ホーム'],  // 1..8
- *     odoStart: 215159,
- *     odoEnd: 215185,
- *     note: '雨'
+ *     loginName: 'アジ',
+ *     pin:       '1234',
+ *     vehicle:   'ハイエース',
+ *     mode:      '通常ルート',    // '通常ルート' | 'バス'
+ *     from:      '会社',
+ *     arrivals:  ['A病院', 'B老人ホーム'],  // 1..8
+ *     odoStart:  215159,
+ *     odoEnd:    215185,
+ *     note:      '雨'
  *   }
  *
  * 受け付けないフィールド (server 側で上書きまたは無視):
- *   - driver      (allowlist の driver_name を正本にする)
+ *   - driver      (送迎PINマスタ.運転者名 を正本にする)
  *   - reportedAt  (new Date() を正本にする)
+ *   - userId      (LINE userId 方式は廃止)
+ *
+ * PIN は 送迎記録_test にも 投稿ログ にも残さない。
+ * 投稿ログ の subject は loginName (表示名) のみ。
  */
 function saveReport(payload) {
   var reportedAtServer = new Date();
-  var userId = payload && payload.userId ? String(payload.userId) : '';
+  var loginName = payload && payload.loginName ? String(payload.loginName) : '';
+  var pin       = payload && payload.pin       ? String(payload.pin)       : '';
   try {
-    var allow = checkAllowed_(userId);
+    var allow = checkAllowedByPin_(loginName, pin);
     if (!allow.ok) {
-      logPost_(reportedAtServer, userId, 'saveReport', 'unauthorized', allow.reason);
+      logPost_(reportedAtServer, loginName, 'saveReport', 'unauthorized', allow.reason);
       throw new Error('unauthorized:' + allow.reason);
     }
 
     var v = validatePayload_(payload);
     if (!v.ok) {
-      logPost_(reportedAtServer, userId, 'saveReport', 'invalid', v.error);
+      logPost_(reportedAtServer, loginName, 'saveReport', 'invalid', v.error);
       throw new Error('invalid:' + v.error);
     }
 
-    // allowlist driver_name が 運転者マスタに存在するか
+    // 送迎PINマスタ.運転者名 が 運転者マスタ に存在するか
     var activeDrivers = loadActiveDriverNames_();
     if (activeDrivers.indexOf(allow.driverName) === -1) {
-      logPost_(reportedAtServer, userId, 'saveReport', 'error', 'driver_not_in_master:' + allow.driverName);
+      logPost_(reportedAtServer, loginName, 'saveReport', 'error', 'driver_not_in_master:' + allow.driverName);
       throw new Error('driver_not_in_master');
     }
 
     // vehicle は 車両マスタに存在するか
     var vehicles = loadVehicleNames_();
     if (vehicles.indexOf(payload.vehicle) === -1) {
-      logPost_(reportedAtServer, userId, 'saveReport', 'error', 'vehicle_not_registered:' + payload.vehicle);
+      logPost_(reportedAtServer, loginName, 'saveReport', 'error', 'vehicle_not_registered:' + payload.vehicle);
       throw new Error('vehicle_not_registered');
     }
 
@@ -128,14 +175,14 @@ function saveReport(payload) {
     if (payload.mode === '通常ルート') {
       var locations = loadLocationNames_();
       if (locations.indexOf(payload.from) === -1) {
-        logPost_(reportedAtServer, userId, 'saveReport', 'error', 'location_not_registered:' + payload.from);
+        logPost_(reportedAtServer, loginName, 'saveReport', 'error', 'location_not_registered:' + payload.from);
         throw new Error('location_not_registered');
       }
       for (var i = 0; i < payload.arrivals.length; i++) {
         var a = payload.arrivals[i];
         if (!a) continue;
         if (locations.indexOf(a) === -1) {
-          logPost_(reportedAtServer, userId, 'saveReport', 'error', 'location_not_registered:' + a);
+          logPost_(reportedAtServer, loginName, 'saveReport', 'error', 'location_not_registered:' + a);
           throw new Error('location_not_registered');
         }
       }
@@ -143,7 +190,7 @@ function saveReport(payload) {
 
     var fareYen = resolveFare_(payload);
     if (fareYen == null) {
-      logPost_(reportedAtServer, userId, 'saveReport', 'error', 'fare_not_registered');
+      logPost_(reportedAtServer, loginName, 'saveReport', 'error', 'fare_not_registered');
       throw new Error('fare_not_registered');
     }
 
@@ -155,7 +202,7 @@ function saveReport(payload) {
     var row = buildRow_(payload, fareYen, totalKm, allow.driverName, reportedAtServer);
     sh.appendRow(row);
 
-    logPost_(reportedAtServer, userId, 'saveReport', 'ok', '');
+    logPost_(reportedAtServer, loginName, 'saveReport', 'ok', '');
     return {
       ok: true,
       savedAt: Utilities.formatDate(reportedAtServer, 'Asia/Tokyo', "yyyy-MM-dd'T'HH:mm:ssXXX"),
@@ -169,14 +216,53 @@ function saveReport(payload) {
         msg !== 'vehicle_not_registered' &&
         msg !== 'location_not_registered' &&
         msg !== 'driver_not_in_master') {
-      logPost_(reportedAtServer, userId, 'saveReport', 'error', msg || String(e));
+      logPost_(reportedAtServer, loginName, 'saveReport', 'error', msg || String(e));
     }
     throw e;
   }
 }
 
-// --- Allowlist ------------------------------------------------------------
+// --- Allowlist: PIN 方式 (新本線) -----------------------------------------
 
+/**
+ * 送迎PINマスタ で 表示名 + PIN を検証する。
+ * 返り値: { ok, reason?, displayName, driverName }
+ * reason codes:
+ *   - missing_login_name / missing_pin
+ *   - user_not_registered   (表示名が送迎PINマスタに無い)
+ *   - pin_mismatch          (PIN 不一致)
+ *   - inactive_user         (active=FALSE)
+ *   - pickup_not_permitted  (送迎利用可=FALSE)
+ *   - missing_driver_name   (運転者名 欄が空)
+ */
+function checkAllowedByPin_(loginName, pin) {
+  if (!loginName) return { ok: false, reason: 'missing_login_name' };
+  if (!pin)       return { ok: false, reason: 'missing_pin' };
+  var rows = readMaster_('送迎PINマスタ',
+    ['表示名', 'PIN', 'active', '送迎利用可', '運転者名']);
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    if (String(r['表示名'] || '').trim() !== String(loginName).trim()) continue;
+    // PIN は数値/文字列どちらで入っていても比較は string で行う (Sheet 側の自動型変換対策)
+    if (String(r['PIN']) !== String(pin)) {
+      return { ok: false, reason: 'pin_mismatch' };
+    }
+    var active = r.active === true || r.active === 'TRUE';
+    if (!active) return { ok: false, reason: 'inactive_user' };
+    var pickupOk = r['送迎利用可'] === true || r['送迎利用可'] === 'TRUE';
+    if (!pickupOk) return { ok: false, reason: 'pickup_not_permitted' };
+    var driverName = String(r['運転者名'] || '').trim();
+    if (!driverName) return { ok: false, reason: 'missing_driver_name' };
+    return { ok: true, displayName: String(r['表示名']).trim(), driverName: driverName };
+  }
+  return { ok: false, reason: 'user_not_registered' };
+}
+
+// --- Allowlist: LINE userId 方式 (LEGACY、修理8 で未使用化) --------------
+
+/**
+ * @deprecated 修理8 で PIN ログイン方式へ切替。checkAllowedByPin_ を使うこと。
+ */
 function checkAllowed_(userId) {
   if (!userId) return { ok: false, reason: 'missing_user_id' };
   var rows = readMaster_('許可マスタ', ['line_user_id', 'display_name', 'role', 'active', 'driver_name']);
