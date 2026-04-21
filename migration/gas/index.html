@@ -100,6 +100,11 @@
       <input type="number" name="odoEnd" inputmode="numeric">
     </div>
 
+    <div class="row" id="depart-photo-row">
+      <label>出発時の写真 (任意)</label>
+      <input type="file" id="depart-photo" accept="image/*" capture="environment">
+    </div>
+
     <div class="row">
       <label>備考 (任意)</label>
       <textarea name="note" rows="2"></textarea>
@@ -151,18 +156,23 @@
     function addArrival() {
       var list = $('#arrivals-list');
       if (list.children.length >= 8) return;
-      var row = document.createElement('div');
-      row.className = 'arrival-row';
-      row.style.margin = '6px 0';
-      row.style.gap = '6px';
-      // 到着地 select
+      var wrap = document.createElement('div');
+      wrap.className = 'arrival-row';
+      wrap.style.margin = '10px 0';
+      wrap.style.padding = '8px';
+      wrap.style.border = '1px solid #ddd';
+      wrap.style.borderRadius = '8px';
+      // 1行目: select + ODO + 削除
+      var line1 = document.createElement('div');
+      line1.style.display = 'flex';
+      line1.style.gap = '6px';
+      line1.style.alignItems = 'center';
       var sel = document.createElement('select');
       sel.name = 'arrival';
       sel.style.flex = '2';
       renderLocationOptions(sel, state.locations);
       if (state.mode === 'バス') sel.disabled = true;
-      row.appendChild(sel);
-      // ODO 到着N 入力欄 (修理14: 各到着地点で実測した累積 ODO を入力)
+      line1.appendChild(sel);
       var odoInput = document.createElement('input');
       odoInput.type = 'number';
       odoInput.inputMode = 'numeric';
@@ -171,12 +181,24 @@
       odoInput.style.flex = '1';
       odoInput.style.minWidth = '90px';
       if (state.mode === 'バス') odoInput.disabled = true;
-      row.appendChild(odoInput);
+      line1.appendChild(odoInput);
       var btn = document.createElement('button');
       btn.type = 'button'; btn.className = 'remove'; btn.textContent = '×';
-      btn.onclick = function() { row.remove(); };
-      row.appendChild(btn);
-      list.appendChild(row);
+      btn.onclick = function() { wrap.remove(); };
+      line1.appendChild(btn);
+      wrap.appendChild(line1);
+      // 2行目: 到着地写真 (修理15)
+      var photo = document.createElement('input');
+      photo.type = 'file';
+      photo.name = 'arrivalPhoto';
+      photo.accept = 'image/*';
+      photo.capture = 'environment';
+      photo.style.marginTop = '6px';
+      photo.style.fontSize = '13px';
+      photo.style.width = '100%';
+      if (state.mode === 'バス') photo.disabled = true;
+      wrap.appendChild(photo);
+      list.appendChild(wrap);
     }
 
     function getArrivals() {
@@ -197,6 +219,59 @@
         })
         .filter(function(p) { return p.arrival; })
         .map(function(p) { return p.odo === '' ? null : Number(p.odo); });
+    }
+
+    // 修理15: 各到着地点の写真 File オブジェクトを 到着 select が埋まっている行だけ集める。
+    // 返り値の length = getArrivals() と一致 (写真なしの到着は null)。
+    function getArrivalPhotoFiles() {
+      return Array.prototype.slice.call($('#arrivals-list').querySelectorAll('.arrival-row'))
+        .map(function(row) {
+          var s = row.querySelector('select[name=arrival]');
+          var p = row.querySelector('input[name=arrivalPhoto]');
+          return { arrival: s ? s.value : '', file: (p && p.files && p.files[0]) ? p.files[0] : null };
+        })
+        .filter(function(x) { return x.arrival; })
+        .map(function(x) { return x.file; });
+    }
+
+    // 修理15: File → ブラウザ内でリサイズ → base64 JPEG へ圧縮。
+    // 最大辺 1600px / JPEG 品質 0.8 (1 枚 ~200-400KB、UrlFetchApp の 50MB 上限に対して余裕)。
+    // base64 prefix (data:image/jpeg;base64,) ごと返すので server は comma split で剥がす。
+    function fileToResizedDataUrl(file, cb) {
+      if (!file) { cb(null, ''); return; }
+      var reader = new FileReader();
+      reader.onerror = function() { cb(new Error('file_read_failed')); };
+      reader.onload = function(e) {
+        var img = new Image();
+        img.onerror = function() { cb(new Error('image_decode_failed')); };
+        img.onload = function() {
+          var maxSide = 1600;
+          var scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+          var w = Math.round(img.width * scale);
+          var h = Math.round(img.height * scale);
+          var canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+          cb(null, canvas.toDataURL('image/jpeg', 0.8));
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function resizeAllFiles(files, onDone) {
+      if (!files || files.length === 0) { onDone([]); return; }
+      var results = new Array(files.length);
+      var done = 0, failed = false;
+      files.forEach(function(f, i) {
+        fileToResizedDataUrl(f, function(err, dataUrl) {
+          if (failed) return;
+          if (err) { failed = true; onDone(null, err); return; }
+          results[i] = dataUrl;
+          done++;
+          if (done === files.length) onDone(results);
+        });
+      });
     }
 
     function renderFormFromMasters(m) {
@@ -244,6 +319,10 @@
       arrList.querySelectorAll('input[name=arrivalOdo]').forEach(function(o) {
         o.disabled = isBus;
         if (isBus) o.value = '';
+      });
+      arrList.querySelectorAll('input[name=arrivalPhoto]').forEach(function(p) {
+        p.disabled = isBus;
+        if (isBus) p.value = '';
       });
       $('#add-arrival').disabled = isBus;
       var fromRow = fromSel.parentElement;
@@ -301,34 +380,52 @@
           return;
         }
       }
-      var payload = {
-        loginName: state.loginName,
-        pin: state.pin,
-        vehicle: f.vehicle.value,
-        mode: state.mode,
-        from: isBus ? '' : f.from.value,
-        arrivals: isBus ? [] : arrivals,
-        arrivalOdos: arrivalOdos,
-        odoStart: Number(f.odoStart.value),
-        odoEnd: isBus ? Number(f.odoEnd.value) : 0,
-        note: f.note.value,
-      };
+      // 修理15: 写真を先にリサイズして、完了後に saveReport を呼ぶ (非同期)。
+      var departFile = $('#depart-photo').files[0] || null;
+      var arrivalFiles = isBus ? [] : getArrivalPhotoFiles();
       $('#submit').disabled = true;
-      google.script.run
-        .withSuccessHandler(function(res) {
-          setSuccess('保存しました (' + res.savedAt + ')');
-          f.reset();
-          $('#arrivals-list').innerHTML = '';
-          addArrival();
+      setSuccess('写真を処理中...');
+      resizeAllFiles([departFile].concat(arrivalFiles), function(dataUrls, err) {
+        if (err) {
+          setError('写真処理失敗: ' + err.message);
           $('#submit').disabled = false;
-        })
-        .withFailureHandler(function(err) {
-          var msg = (err && err.message) ? err.message : String(err);
-          var human = humanizeError_(msg);
-          setError(human);
-          $('#submit').disabled = false;
-        })
-        .saveReport(payload);
+          return;
+        }
+        var departDataUrl = dataUrls[0] || '';
+        var arrivalDataUrls = dataUrls.slice(1);
+        var hasAnyPhoto = !!(departDataUrl) || arrivalDataUrls.some(function(u){ return u; });
+        var photos = hasAnyPhoto ? { depart: departDataUrl, arrivals: arrivalDataUrls } : null;
+        var payload = {
+          loginName: state.loginName,
+          pin: state.pin,
+          vehicle: f.vehicle.value,
+          mode: state.mode,
+          from: isBus ? '' : f.from.value,
+          arrivals: isBus ? [] : arrivals,
+          arrivalOdos: arrivalOdos,
+          odoStart: Number(f.odoStart.value),
+          odoEnd: isBus ? Number(f.odoEnd.value) : 0,
+          note: f.note.value,
+          photos: photos,
+        };
+        setSuccess('送信中...');
+        google.script.run
+          .withSuccessHandler(function(res) {
+            setSuccess('保存しました (' + res.savedAt + ')');
+            f.reset();
+            $('#arrivals-list').innerHTML = '';
+            addArrival();
+            $('#depart-photo').value = '';
+            $('#submit').disabled = false;
+          })
+          .withFailureHandler(function(errX) {
+            var msg = (errX && errX.message) ? errX.message : String(errX);
+            var human = humanizeError_(msg);
+            setError(human);
+            $('#submit').disabled = false;
+          })
+          .saveReport(payload);
+      });
     });
 
     function humanizeError_(msg) {

@@ -198,8 +198,14 @@ function saveReport(payload) {
     // 距離マスタ未登録で保存失敗させない (修理6 案2)。
     var totalKm = resolveTotalKm_(payload);
 
+    // 修理15: 写真 (payload.photos) があれば Supabase Storage にアップロードし、
+    // 返ってきた公開 URL を buildRow_ の AA..AI 列へ注入する。
+    // 写真未送信 / 一部アップ失敗 / Script Property 未設定 は saveReport を壊さない
+    // (空文字が入るだけで、Google Sheet 保存と PA bridge は通常どおり進む)。
+    var photoUrls = resolvePhotoUrls_(payload, reportedAtServer, loginName);
+
     var sh = getTargetReportSheet_();
-    var row = buildRow_(payload, fareYen, totalKm, allow.driverName, reportedAtServer);
+    var row = buildRow_(payload, fareYen, totalKm, allow.driverName, reportedAtServer, photoUrls);
     sh.appendRow(row);
 
     // 修理11: Google Sheet 書込成功後に OneDrive Excel 側へブリッジ転送する。
@@ -435,7 +441,7 @@ function resolveTotalKm_(payload) {
  * userId / displayName は **実シートに列が無い**。監査は 投稿ログ タブで完結
  * (allowlist 経由で display_name を逆引きできるので二重記録はしない)。
  */
-function buildRow_(p, fareYen, totalKm, driverName, reportedAtServer) {
+function buildRow_(p, fareYen, totalKm, driverName, reportedAtServer, photoUrls) {
   // バスモードでは既存本線 (pages/api/powerautomate.ts:1023-1024) と揃えて
   // 出発地 (D) と 到着1..8 (E..L) を空欄で書き込む。通常ルートのみ値を入れる。
   var isBus = (p.mode === 'バス');
@@ -446,6 +452,12 @@ function buildRow_(p, fareYen, totalKm, driverName, reportedAtServer) {
   var padded = effectiveArrivals.slice(0, 8);
   while (padded.length < 8) padded.push('');
   var effectiveOdoEnd = resolveEffectiveOdoEnd_(p);
+
+  // 修理15: 写真 URL (AA..AI)。photoUrls 未渡しなら全部空 (後方互換)。
+  var photos = photoUrls && typeof photoUrls === 'object' ? photoUrls : {};
+  var departPhoto = photos.depart || '';
+  var arrivalPhotos = Array.isArray(photos.arrivals) ? photos.arrivals.slice(0, 8) : [];
+  while (arrivalPhotos.length < 8) arrivalPhotos.push('');
 
   // 修理14: 区間距離 Q..X
   //   - 通常ルート + arrivalOdos: 各到着地 ODO 差分で 8 区間埋める (0.1 km 丸め)
@@ -495,15 +507,15 @@ function buildRow_(p, fareYen, totalKm, driverName, reportedAtServer) {
     segments[7],         // X: 距離（到着７〜到着８）
     totalKm,             // Y: 総走行距離（km）
     p.note || '',        // Z: 備考
-    '',                  // AA: 出発写真URL (修理15 で埋める予定)
-    '',                  // AB: 到着写真URL到着１
-    '',                  // AC: 到着写真URL到着２
-    '',                  // AD: 到着写真URL到着３
-    '',                  // AE: 到着写真URL到着４
-    '',                  // AF: 到着写真URL到着５
-    '',                  // AG: 到着写真URL到着６
-    '',                  // AH: 到着写真URL到着７
-    '',                  // AI: 到着写真URL到着８
+    departPhoto,         // AA: 出発写真URL (修理15: Supabase Storage 公開 URL)
+    arrivalPhotos[0],    // AB: 到着写真URL到着１
+    arrivalPhotos[1],    // AC: 到着写真URL到着２
+    arrivalPhotos[2],    // AD: 到着写真URL到着３
+    arrivalPhotos[3],    // AE: 到着写真URL到着４
+    arrivalPhotos[4],    // AF: 到着写真URL到着５
+    arrivalPhotos[5],    // AG: 到着写真URL到着６
+    arrivalPhotos[6],    // AH: 到着写真URL到着７
+    arrivalPhotos[7],    // AI: 到着写真URL到着８
   ];
 }
 
@@ -757,4 +769,100 @@ function replaySheetRowsToExcel() {
 function debugExcelPathForMay_() {
   var testDate = '2026-05-03T09:00:00+09:00';
   Logger.log('ExcelPath=' + excelPathForDate_(testDate));
+}
+
+// --- Supabase Storage upload (修理15: 写真 → AA..AI URL) ------------------
+
+/**
+ * Script Properties から Supabase 接続情報を取り出す。3 つ全て set されていないと
+ * skip 扱い (saveReport は写真 URL 全空のまま進行)。
+ * Script Properties:
+ *   SUPABASE_URL, SUPABASE_BUCKET, SUPABASE_SERVICE_ROLE_KEY
+ */
+function getSupabaseConfig_() {
+  var url = getProp_('SUPABASE_URL');
+  var bucket = getProp_('SUPABASE_BUCKET');
+  var key = getProp_('SUPABASE_SERVICE_ROLE_KEY');
+  if (!url || !bucket || !key) {
+    return { ok: false, reason: 'missing_supabase_config' };
+  }
+  // 末尾 / を剥がして後段の URL 組立を簡単にする
+  if (url.slice(-1) === '/') url = url.slice(0, -1);
+  return { ok: true, url: url, bucket: bucket, key: key };
+}
+
+/**
+ * base64 (data URL でもプレーン base64 でも可) を Supabase Storage へ 1 ファイル POST する。
+ * 成功時: { ok: true, url: 'https://.../storage/v1/object/public/<bucket>/<filename>' }
+ * 失敗時: { ok: false, status, body } または { skipped: true, reason }
+ * PIN には触れない。muteHttpExceptions で例外吸収、throw しない。
+ */
+function uploadPhotoToSupabase_(base64, filename) {
+  var cfg = getSupabaseConfig_();
+  if (!cfg.ok) return { skipped: true, reason: cfg.reason };
+  var comma = String(base64 || '').indexOf(',');
+  var raw = (comma >= 0) ? base64.slice(comma + 1) : base64;
+  if (!raw) return { skipped: true, reason: 'empty_photo' };
+  var bytes;
+  try {
+    bytes = Utilities.base64Decode(raw);
+  } catch (e) {
+    return { ok: false, status: 0, body: 'base64_decode_failed:' + e };
+  }
+  var uploadUrl = cfg.url + '/storage/v1/object/' + encodeURIComponent(cfg.bucket) +
+    '/' + encodeURIComponent(filename);
+  try {
+    var res = UrlFetchApp.fetch(uploadUrl, {
+      method: 'post',
+      contentType: 'image/jpeg',
+      headers: {
+        'Authorization': 'Bearer ' + cfg.key,
+        'x-upsert': 'true',
+      },
+      payload: bytes,
+      muteHttpExceptions: true,
+      followRedirects: true,
+    });
+    var status = res.getResponseCode();
+    var text = String(res.getContentText() || '').slice(0, 300);
+    if (status >= 200 && status < 300) {
+      var publicUrl = cfg.url + '/storage/v1/object/public/' +
+        encodeURIComponent(cfg.bucket) + '/' + encodeURIComponent(filename);
+      return { ok: true, url: publicUrl, status: status };
+    }
+    return { ok: false, status: status, body: text };
+  } catch (e) {
+    return { ok: false, status: 0, body: 'fetch_exception:' + e };
+  }
+}
+
+/**
+ * saveReport から呼ばれる。payload.photos を全てアップロードし、
+ * { depart: url_or_empty, arrivals: [url_or_empty × 8] } を返す。
+ * 失敗は Logger.log に記録して URL を空で残す (saveReport 本線を壊さない)。
+ */
+function resolvePhotoUrls_(payload, reportedAtServer, loginName) {
+  var result = { depart: '', arrivals: ['', '', '', '', '', '', '', ''] };
+  if (!payload || !payload.photos) return result;
+  var ts = Utilities.formatDate(reportedAtServer, 'Asia/Tokyo', 'yyyyMMdd_HHmmss');
+  var rand = Math.random().toString(36).slice(2, 8);
+  if (payload.photos.depart) {
+    var dName = 'depart_' + ts + '_' + rand + '.jpg';
+    var dRes = uploadPhotoToSupabase_(payload.photos.depart, dName);
+    if (dRes.ok) result.depart = dRes.url;
+    else Logger.log('resolvePhotoUrls_ depart failed login=' + loginName +
+      ' status=' + (dRes.status || 0) + ' reason=' + (dRes.reason || '') +
+      ' body=' + (dRes.body || ''));
+  }
+  var arrivals = Array.isArray(payload.photos.arrivals) ? payload.photos.arrivals : [];
+  for (var i = 0; i < Math.min(8, arrivals.length); i++) {
+    if (!arrivals[i]) continue;
+    var aName = 'arrive_' + (i + 1) + '_' + ts + '_' + rand + '.jpg';
+    var aRes = uploadPhotoToSupabase_(arrivals[i], aName);
+    if (aRes.ok) result.arrivals[i] = aRes.url;
+    else Logger.log('resolvePhotoUrls_ arrive_' + (i + 1) + ' failed login=' + loginName +
+      ' status=' + (aRes.status || 0) + ' reason=' + (aRes.reason || '') +
+      ' body=' + (aRes.body || ''));
+  }
+  return result;
 }
